@@ -1,0 +1,178 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #1a1a1a;
+  color: #ffffff;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: #2a2a2a;
+  padding: 16px 24px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  padding: 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.controls {
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.config-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.config-section label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-section select {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid #3a3a3a;
+  background: #1a1a1a;
+  color: #ffffff;
+}
+
+.config-section input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.buttons button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.buttons button:first-child {
+  background: #4CAF50;
+  color: white;
+}
+
+.buttons button:first-child:hover:not(:disabled) {
+  background: #45a049;
+}
+
+.buttons button:not(:first-child) {
+  background: #3a3a3a;
+  color: white;
+}
+
+.buttons button:not(:first-child):hover:not(:disabled) {
+  background: #4a4a4a;
+}
+
+.buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  font-size: 16px;
+}
+
+.error {
+  background: #ff4444;
+  color: white;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.system-status {
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.system-status h2 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+}
+
+.info-item .label {
+  color: #888;
+}
+
+.info-item .value {
+  font-weight: 500;
+}
+
+/* Overlay styles */
+.overlay {
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  text-align: center;
+  -webkit-app-region: drag;
+}
+
+.overlay .status {
+  font-weight: bold;
+  margin-bottom: 4px;
+  background: transparent;
+  padding: 0;
+}
+
+.overlay .duration {
+  font-family: monospace;
+}

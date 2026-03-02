@@ -1,0 +1,45 @@
+appId: com.screenrecorder.app
+productName: Screen Recording Tool
+copyright: Copyright © 2024
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: native/dist
+    to: native/dist
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.video
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Video

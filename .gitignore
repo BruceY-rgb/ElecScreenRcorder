@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+release/
+
+# Native build outputs
+native/build/
+native/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Third-party dependencies
+# Note: obs-studio is added as git submodule
+native/third_party/nlohmann-json/
+native/third_party/readerwriterqueue/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Project-specific (do not commit)
+.claude/
+.trellis/
+docs/
+AGENTS.md
+CLAUDE.md
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
