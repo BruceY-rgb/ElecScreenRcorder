@@ -2,6 +2,7 @@
 
 #include <string>
 #include <optional>
+#include <cstdint>
 
 /**
  * Command types supported by the recorder
@@ -20,11 +21,12 @@ enum class CommandType {
  * Recording configuration from START command
  */
 struct StartConfig {
-    std::string resolution;      // "1080p", "2k", "4k"
-    int fps = 60;                 // 30, 60
-    std::string savePath;         // Output file path
-    bool separateAudio = false;    // Separate audio tracks
-    bool remuxToMp4 = false;      // Convert to MP4 after recording
+    int width = 1920;                // Screen width
+    int height = 1080;               // Screen height
+    int fps = 60;                    // Frame rate
+    std::string savePath;             // Output file path
+    bool separateAudio = false;       // Separate audio tracks
+    bool remuxToMp4 = false;         // Convert to MP4 after recording
 };
 
 /**
@@ -55,18 +57,30 @@ std::string createStatusResponse(const std::string& state);
  * @param screenWidth Screen width in pixels
  * @param screenHeight Screen height in pixels
  * @param refreshRate Monitor refresh rate in Hz
+ * @param scalingFactor DPI scaling factor
+ * @param cpuName CPU name
+ * @param gpuName GPU name
+ * @param ramGB RAM in GB
+ * @param mousePollingRate Mouse polling rate in Hz
  */
-std::string createSysInfoResponse(int screenWidth, int screenHeight, int refreshRate);
+std::string createSysInfoResponse(int screenWidth, int screenHeight, int refreshRate,
+                                  double scalingFactor = 1.0,
+                                  const std::string& cpuName = "",
+                                  const std::string& gpuName = "",
+                                  int ramGB = 0,
+                                  int mousePollingRate = 200);
 
 /**
  * Create a finish response JSON string
  * @param videoPath Path to the recorded video file
  * @param actionsPath Path to the actions CSV file
  * @param movementsPath Path to the movements CSV file
+ * @param duration Recording duration in milliseconds
  */
 std::string createFinishResponse(const std::string& videoPath,
                                  const std::string& actionsPath,
-                                 const std::string& movementsPath);
+                                 const std::string& movementsPath,
+                                 int64_t duration = 0);
 
 /**
  * Create an error response JSON string

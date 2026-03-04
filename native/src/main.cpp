@@ -16,6 +16,8 @@
 #include "utils.h"
 #include "input_capture.h"
 #include "csv_writer.h"
+#include "recorder.h"
+#include "system_info.h"
 
 #include <iostream>
 #include <string>
@@ -100,13 +102,35 @@ public:
             return false;
         }
 
-        // TODO: Initialize OBS recording with config
+        // Start OBS recording
+        RecordingConfig obsConfig;
+        obsConfig.width = config.width;
+        obsConfig.height = config.height;
+        obsConfig.fps = config.fps;
+        obsConfig.videoBitrate = (config.height >= 1440) ? 15000 : 10000;
+        obsConfig.savePath = config.savePath;
+        obsConfig.separateAudio = config.separateAudio;
+        obsConfig.remuxToMp4 = config.remuxToMp4;
+
+        Recorder* recorder = getRecorder();
+        if (!recorder || !recorder->startRecording(obsConfig)) {
+            stopInputCapture();
+            stopCsvWriter();
+            shutdownInputCapture();
+            return false;
+        }
 
         return true;
     }
 
     // Stop recording
     void stopRecording() {
+        // Stop OBS recording
+        Recorder* recorder = getRecorder();
+        if (recorder) {
+            recorder->stopRecording();
+        }
+
         // Stop input capture
         stopInputCapture();
 
@@ -115,8 +139,6 @@ public:
 
         // Shutdown input capture
         shutdownInputCapture();
-
-        // TODO: Stop OBS recording
     }
 
     // Handle START command
@@ -175,7 +197,11 @@ public:
         // Pause CSV writer
         pauseCsvWriter();
 
-        // TODO: Pause OBS recording
+        // Pause OBS recording
+        Recorder* recorder = getRecorder();
+        if (recorder) {
+            recorder->pauseRecording();
+        }
 
         state_ = AppState::PAUSED;
         sendResponse(createStatusResponse("paused"));
@@ -194,7 +220,11 @@ public:
         // Resume CSV writer
         resumeCsvWriter();
 
-        // TODO: Resume OBS recording
+        // Resume OBS recording
+        Recorder* recorder = getRecorder();
+        if (recorder) {
+            recorder->resumeRecording();
+        }
 
         state_ = AppState::RECORDING;
         sendResponse(createStatusResponse("recording"));
@@ -202,19 +232,10 @@ public:
 
     // Handle SYSINFO command
     void handleSysInfo() {
-        // Get screen dimensions
-        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+        // Get comprehensive system information
+        SystemInfo info = getSystemInfo();
 
-        // Get refresh rate (default to 60 if unable to get)
-        int refreshRate = 60;
-        HDC hdc = GetDC(NULL);
-        if (hdc) {
-            refreshRate = GetDeviceCaps(hdc, VREFRESH);
-            ReleaseDC(NULL, hdc);
-        }
-
-        sendResponse(createSysInfoResponse(screenWidth, screenHeight, refreshRate));
+        sendResponse(createSysInfoResponseEx(info));
     }
 
     // Process a single command
@@ -279,6 +300,20 @@ int main() {
     // Initialize CSV writer system
     initCsvWriter();
 
+    // Initialize OBS recorder
+    // Get the module path from the executable directory
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    std::wstring modulePath = exePath;
+    size_t lastSlash = modulePath.rfind(L'\\');
+    if (lastSlash != std::wstring::npos) {
+        modulePath = modulePath.substr(0, lastSlash);
+    }
+
+    if (!initRecorder(modulePath)) {
+        std::cerr << "[MAIN] Failed to initialize recorder\n";
+    }
+
     // Create application instance
     RecorderApp app;
 
@@ -301,6 +336,7 @@ int main() {
     }
 
     // Cleanup
+    shutdownRecorder();
     shutdownCsvWriter();
     cleanupHighResTimer();
 

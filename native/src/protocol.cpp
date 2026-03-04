@@ -1,84 +1,35 @@
+/**
+ * Protocol Implementation
+ *
+ * JSON protocol parsing and serialization using nlohmann-json library.
+ */
+
 #include "protocol.h"
+#include "../third_party/nlohmann-json/json.hpp"
+
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
+
+using json = nlohmann::json;
 
 namespace {
 
-// Simple string trimming
+// Trim whitespace from string
 std::string trim(const std::string& s) {
     auto start = std::find_if(s.begin(), s.end(), [](unsigned char c) { return !std::isspace(c); });
-    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c); }).base();
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c) }).base();
     return (start < end) ? std::string(start, end) : "";
 }
 
-// Simple JSON string parsing (extract value for key)
-std::string getStringValue(const std::string& json, const std::string& key) {
-    std::string searchKey = "\"" + key + "\"";
-    size_t keyPos = json.find(searchKey);
-    if (keyPos == std::string::npos) return "";
-
-    // Find the colon after the key
-    size_t colonPos = json.find(":", keyPos);
-    if (colonPos == std::string::npos) return "";
-
-    // Find the opening quote for the value
-    size_t quotePos = json.find("\"", colonPos);
-    if (quotePos == std::string::npos) return "";
-
-    // Find the closing quote
-    size_t endQuotePos = json.find("\"", quotePos + 1);
-    if (endQuotePos == std::string::npos) return "";
-
-    return json.substr(quotePos + 1, endQuotePos - quotePos - 1);
-}
-
-// Simple JSON boolean parsing
-bool getBoolValue(const std::string& json, const std::string& key) {
-    std::string searchKey = "\"" + key + "\"";
-    size_t keyPos = json.find(searchKey);
-    if (keyPos == std::string::npos) return false;
-
-    size_t colonPos = json.find(":", keyPos);
-    if (colonPos == std::string::npos) return false;
-
-    // Look for true/false after colon
-    std::string afterColon = trim(json.substr(colonPos + 1));
-    if (afterColon.substr(0, 4) == "true") return true;
-    return false;
-}
-
-// Simple JSON integer parsing
-int getIntValue(const std::string& json, const std::string& key, int defaultVal = 0) {
-    std::string searchKey = "\"" + key + "\"";
-    size_t keyPos = json.find(searchKey);
-    if (keyPos == std::string::npos) return defaultVal;
-
-    size_t colonPos = json.find(":", keyPos);
-    if (colonPos == std::string::npos) return defaultVal;
-
-    std::string afterColon = trim(json.substr(colonPos + 1));
-    size_t endPos = 0;
-    for (size_t i = 0; i < afterColon.length(); i++) {
-        if (!std::isdigit(afterColon[i]) && afterColon[i] != '-') {
-            endPos = i;
-            break;
-        }
+// Parse action type from JSON
+CommandType parseActionType(const json& j) {
+    if (!j.contains("action") || !j["action"].is_string()) {
+        return CommandType::UNKNOWN;
     }
-    if (endPos == 0) endPos = afterColon.length();
 
-    try {
-        return std::stoi(afterColon.substr(0, endPos));
-    } catch (...) {
-        return defaultVal;
-    }
-}
-
-// Parse action field
-CommandType parseActionType(const std::string& json) {
-    std::string action = getStringValue(json, "action");
+    std::string action = j["action"].get<std::string>();
     std::transform(action.begin(), action.end(), action.begin(), ::tolower);
 
     if (action == "start") return CommandType::START;
@@ -89,14 +40,6 @@ CommandType parseActionType(const std::string& json) {
     if (action == "quit") return CommandType::QUIT;
 
     return CommandType::UNKNOWN;
-}
-
-// Check if JSON is valid (basic check)
-bool isValidJson(const std::string& json) {
-    std::string trimmed = trim(json);
-    if (trimmed.empty()) return false;
-    if (trimmed.front() != '{' || trimmed.back() != '}') return false;
-    return trimmed.find("\"action\"") != std::string::npos;
 }
 
 } // anonymous namespace
@@ -119,31 +62,52 @@ std::string jsonEscape(const std::string& s) {
 }
 
 std::optional<Command> parseCommand(const std::string& input) {
-    std::string json = trim(input);
+    std::string trimmed = trim(input);
 
-    if (!isValidJson(json)) {
+    if (trimmed.empty()) {
+        return std::nullopt;
+    }
+
+    // Parse JSON
+    json j;
+    try {
+        j = json::parse(trimmed);
+    } catch (const json::parse_error& e) {
+        return std::nullopt;
+    }
+
+    if (!j.is_object()) {
         return std::nullopt;
     }
 
     Command cmd;
-    cmd.type = parseActionType(json);
-    cmd.rawAction = getStringValue(json, "action");
+    cmd.type = parseActionType(j);
 
-    if (cmd.type == CommandType::START) {
-        // Parse config if present
-        // Look for config object
-        size_t configStart = json.find("\"config\"");
-        if (configStart != std::string::npos) {
-            size_t objStart = json.find("{", configStart);
-            size_t objEnd = json.find("}", objStart);
-            if (objStart != std::string::npos && objEnd != std::string::npos) {
-                std::string configJson = json.substr(objStart, objEnd - objStart + 1);
-                cmd.config.resolution = getStringValue(configJson, "resolution");
-                cmd.config.fps = getIntValue(configJson, "fps", 60);
-                cmd.config.savePath = getStringValue(configJson, "savePath");
-                cmd.config.separateAudio = getBoolValue(configJson, "separateAudio");
-                cmd.config.remuxToMp4 = getBoolValue(configJson, "remuxToMp4");
-            }
+    if (j.contains("action") && j["action"].is_string()) {
+        cmd.rawAction = j["action"].get<std::string>();
+    }
+
+    // Parse config for START command
+    if (cmd.type == CommandType::START && j.contains("config")) {
+        const json& config = j["config"];
+
+        if (config.contains("width") && config["width"].is_number()) {
+            cmd.config.width = config["width"].get<int>();
+        }
+        if (config.contains("height") && config["height"].is_number()) {
+            cmd.config.height = config["height"].get<int>();
+        }
+        if (config.contains("fps") && config["fps"].is_number()) {
+            cmd.config.fps = config["fps"].get<int>();
+        }
+        if (config.contains("savePath") && config["savePath"].is_string()) {
+            cmd.config.savePath = config["savePath"].get<std::string>();
+        }
+        if (config.contains("separateAudio") && config["separateAudio"].is_boolean()) {
+            cmd.config.separateAudio = config["separateAudio"].get<bool>();
+        }
+        if (config.contains("remuxToMp4") && config["remuxToMp4"].is_boolean()) {
+            cmd.config.remuxToMp4 = config["remuxToMp4"].get<bool>();
         }
     }
 
@@ -151,33 +115,46 @@ std::optional<Command> parseCommand(const std::string& input) {
 }
 
 std::string createStatusResponse(const std::string& state) {
-    std::ostringstream oss;
-    oss << "{\"type\":\"status\",\"state\":\"" << jsonEscape(state) << "\"}";
-    return oss.str();
+    json j;
+    j["type"] = "status";
+    j["state"] = state;
+    return j.dump();
 }
 
-std::string createSysInfoResponse(int screenWidth, int screenHeight, int refreshRate) {
-    std::ostringstream oss;
-    oss << "{\"type\":\"sysinfo\",\"data\":{";
-    oss << "\"screenWidth\":" << screenWidth << ",";
-    oss << "\"screenHeight\":" << screenHeight << ",";
-    oss << "\"refreshRate\":" << refreshRate << "}}";
-    return oss.str();
+std::string createSysInfoResponse(int screenWidth, int screenHeight, int refreshRate,
+                                  double scalingFactor, const std::string& cpuName,
+                                  const std::string& gpuName, int ramGB, int mousePollingRate) {
+    json j;
+    j["type"] = "sysinfo";
+    j["data"] = {
+        {"screenWidth", screenWidth},
+        {"screenHeight", screenHeight},
+        {"refreshRate", refreshRate},
+        {"scalingFactor", scalingFactor},
+        {"cpuName", cpuName},
+        {"gpuName", gpuName},
+        {"ramGB", ramGB},
+        {"mousePollingRate", mousePollingRate}
+    };
+    return j.dump();
 }
 
 std::string createFinishResponse(const std::string& videoPath,
                                  const std::string& actionsPath,
-                                 const std::string& movementsPath) {
-    std::ostringstream oss;
-    oss << "{\"type\":\"finish\",";
-    oss << "\"videoPath\":\"" << jsonEscape(videoPath) << "\",";
-    oss << "\"actionsPath\":\"" << jsonEscape(actionsPath) << "\",";
-    oss << "\"movementsPath\":\"" << jsonEscape(movementsPath) << "\"}";
-    return oss.str();
+                                 const std::string& movementsPath,
+                                 int64_t duration) {
+    json j;
+    j["type"] = "finish";
+    j["videoPath"] = videoPath;
+    j["actionsPath"] = actionsPath;
+    j["movementsPath"] = movementsPath;
+    j["duration"] = duration;
+    return j.dump();
 }
 
 std::string createErrorResponse(const std::string& message) {
-    std::ostringstream oss;
-    oss << "{\"type\":\"error\",\"msg\":\"" << jsonEscape(message) << "\"}";
-    return oss.str();
+    json j;
+    j["type"] = "error";
+    j["msg"] = message;
+    return j.dump();
 }
