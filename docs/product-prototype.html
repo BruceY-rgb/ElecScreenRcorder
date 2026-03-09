@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreenCraft 产品原型设计文档</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #fafbfc;
+            --bg-secondary: #f3f4f6;
+            --bg-card: #ffffff;
+            --bg-elevated: #ffffff;
+            --accent-primary: #2563eb;
+            --accent-secondary: #1d4ed8;
+            --accent-success: #059669;
+            --accent-warning: #d97706;
+            --accent-error: #dc2626;
+            --text-primary: #111827;
+            --text-secondary: #4b5563;
+            --text-muted: #9ca3af;
+            --border-color: #e5e7eb;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.8;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 60px 40px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+            padding-bottom: 40px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-primary);
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: var(--accent-primary);
+            border-radius: 2px;
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 32px 0 16px;
+        }
+
+        h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        section {
+            margin-bottom: 56px;
+        }
+
+        code {
+            background: var(--bg-secondary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9em;
+            color: var(--accent-primary);
+        }
+
+        /* Overview Cards */
+        .overview-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            margin: 24px 0 40px;
+        }
+
+        .overview-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .overview-card h4 {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+        }
+
+        .overview-card p {
+            font-size: 0.95rem;
+            margin-bottom: 0;
+        }
+
+        .overview-card .number {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            background: var(--accent-primary);
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 28px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-right: 12px;
+        }
+
+        /* Window Mockups */
+        .window-mockup {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: var(--shadow-lg);
+            margin: 24px 0 32px;
+        }
+
+        .window-titlebar {
+            background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .window-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .window-control {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .window-control.close { background: #f87171; }
+        .window-control.minimize { background: #fbbf24; }
+        .window-control.maximize { background: #34d399; }
+
+        .window-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .window-content {
+            padding: 24px;
+        }
+
+        /* Main Window */
+        .main-window {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+
+        .settings-group {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 18px;
+            margin-bottom: 14px;
+        }
+
+        .settings-group-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+            font-weight: 600;
+        }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .setting-select {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            min-width: 130px;
+        }
+
+        .setting-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .checkbox {
+            width: 16px;
+            height: 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: white;
+        }
+
+        .checkbox.checked {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+        }
+
+        .record-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(180deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .record-btn:hover {
+            background: linear-gradient(180deg, var(--accent-secondary) 0%, #1e40af 100%);
+        }
+
+        .record-btn .dot {
+            width: 10px;
+            height: 10px;
+            background: white;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            font-size: 0.8rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        /* Overlay Window */
+        .overlay-window {
+            max-width: 200px;
+            margin: 0 auto;
+        }
+
+        .overlay-content {
+            padding: 16px;
+            text-align: center;
+        }
+
+        .overlay-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .overlay-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-success);
+        }
+
+        .overlay-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.3rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .overlay-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            font-size: 0.75rem;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--text-secondary);
+        }
+
+        /* Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.9rem;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .data-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table td {
+            color: var(--text-secondary);
+        }
+
+        .data-table tr:hover td {
+            background: var(--bg-secondary);
+        }
+
+        /* Flow Diagrams */
+        .flow-diagram {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 28px;
+            margin: 20px 0 32px;
+        }
+
+        .flow-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .flow-step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 14px 20px;
+            text-align: center;
+            min-width: 120px;
+        }
+
+        .flow-step .step-num {
+            font-size: 0.65rem;
+            color: var(--accent-primary);
+            font-weight: 600;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .flow-step .step-text {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+        }
+
+        .flow-arrow {
+            color: var(--text-muted);
+            font-size: 1.2rem;
+        }
+
+        /* State Machine */
+        .state-machine {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 20px;
+        }
+
+        .state {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 8px 18px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .state.active {
+            border-color: var(--accent-success);
+            color: var(--accent-success);
+        }
+
+        .state.paused {
+            border-color: var(--accent-warning);
+            color: var(--accent-warning);
+        }
+
+        .state-arrow {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Architecture */
+        .architecture {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 32px 20px;
+            flex-wrap: wrap;
+        }
+
+        .arch-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            min-width: 180px;
+            max-width: 240px;
+        }
+
+        .arch-box.highlight {
+            border-color: var(--accent-primary);
+            background: #eff6ff;
+        }
+
+        .arch-box h4 {
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+        }
+
+        .arch-box p {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 0;
+            line-height: 1.6;
+        }
+
+        .arch-connector {
+            display: flex;
+            align-items: center;
+            color: var(--accent-primary);
+            font-size: 1.2rem;
+        }
+
+        /* Heartbeat */
+        .heartbeat {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 24px;
+            flex-wrap: wrap;
+        }
+
+        .heartbeat-item {
+            text-align: center;
+        }
+
+        .heartbeat-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 8px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .heartbeat-icon.pulse {
+            animation: heartbeat-pulse 1s infinite;
+            color: var(--accent-primary);
+        }
+
+        @keyframes heartbeat-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+        }
+
+        .heartbeat-icon.action {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .heartbeat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .heartbeat-arrow {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        /* Log Path */
+        .log-path {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px 16px;
+            margin: 16px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        /* Tray */
+        .tray-menu {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 6px;
+            max-width: 180px;
+            margin: 16px auto;
+        }
+
+        .tray-item {
+            padding: 10px 14px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .tray-item:hover {
+            background: var(--bg-secondary);
+        }
+
+        .tray-item.recording {
+            color: var(--accent-success);
+        }
+
+        .tray-divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 6px 0;
+        }
+
+        /* Shortcuts */
+        .shortcuts-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin: 20px 0;
+        }
+
+        .shortcut-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .shortcut-keys {
+            display: flex;
+            gap: 4px;
+        }
+
+        .key {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        .shortcut-desc {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            text-align: center;
+        }
+
+        /* Checklist */
+        .checklist {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .check-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .check-box {
+            width: 16px;
+            height: 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        /* Section badge */
+        .section-badge {
+            display: inline-block;
+            background: var(--accent-primary);
+            color: white;
+            font-size: 0.65rem;
+            padding: 3px 8px;
+            border-radius: 10px;
+            margin-left: 10px;
+            font-weight: 500;
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 0;
+            border-top: 1px solid var(--border-color);
+            margin-top: 60px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+        }
+
+        .feature-list li {
+            position: relative;
+            padding-left: 20px;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .feature-list li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 10px;
+            width: 6px;
+            height: 6px;
+            background: var(--accent-primary);
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ScreenCraft</h1>
+            <p class="subtitle">产品原型设计文档</p>
+        </header>
+
+        <!-- 一、界面总览 -->
+        <section>
+            <h2>界面总览 <span class="section-badge">Overview</span></h2>
+            <p>本产品采用双窗口设计，分别承担不同的功能职责：</p>
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <h4><span class="number">1</span>主控制窗口</h4>
+                    <p>负责录制参数配置、录制控制、系统信息显示等功能，是用户进行操作的主要界面</p>
+                </div>
+                <div class="overview-card">
+                    <h4><span class="number">2</span>悬浮监视窗</h4>
+                    <p>负责实时显示录制状态，悬浮于桌面最上层，可拖动位置，不会被录制到视频中</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 二、主控制窗口 -->
+        <section>
+            <h2>主控制窗口 <span class="section-badge">Main Window</span></h2>
+
+            <div class="window-mockup main-window">
+                <div class="window-titlebar">
+                    <div class="window-controls">
+                        <span class="window-control close"></span>
+                        <span class="window-control minimize"></span>
+                        <span class="window-control maximize"></span>
+                    </div>
+                    <span class="window-title">ScreenCraft</span>
+                    <div style="width: 52px;"></div>
+                </div>
+                <div class="window-content">
+                    <div class="settings-group">
+                        <div class="settings-group-title">录制设置</div>
+                        <div class="setting-row">
+                            <span class="setting-label">分辨率</span>
+                            <select class="setting-select">
+                                <option>2560 x 1440</option>
+                                <option>1920 x 1080</option>
+                                <option>3840 x 2160</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">帧率</span>
+                            <select class="setting-select">
+                                <option>60 FPS</option>
+                                <option>30 FPS</option>
+                                <option>120 FPS</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-checkbox">
+                                <span class="checkbox checked">&#10003;</span>
+                                录制系统音频
+                            </span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-checkbox">
+                                <span class="checkbox checked">&#10003;</span>
+                                录制麦克风
+                            </span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-checkbox">
+                                <span class="checkbox checked">&#10003;</span>
+                                录制完成后转MP4
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="settings-group">
+                        <div class="settings-group-title">系统信息</div>
+                        <div class="setting-row">
+                            <span class="setting-label">CPU</span>
+                            <span style="color: var(--text-primary); font-size: 0.8rem;">Intel i7-12700K</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">GPU</span>
+                            <span style="color: var(--text-primary); font-size: 0.8rem;">NVIDIA RTX 3070</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">编码器</span>
+                            <span style="color: var(--accent-success); font-size: 0.8rem;">NVENC (可用)</span>
+                        </div>
+                    </div>
+
+                    <button class="record-btn">
+                        <span class="dot"></span>
+                        开始录制
+                    </button>
+
+                    <div class="status-bar">
+                        <div class="status-item">
+                            <span class="status-indicator"></span>
+                            <span>空闲</span>
+                        </div>
+                        <div class="status-item">
+                            <span>录制时长: 00:00:00</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>窗口规格</h3>
+            <ul class="feature-list">
+                <li>窗口位置：屏幕中央显示</li>
+                <li>窗口尺寸：480 x 600 像素（固定尺寸，不可缩放）</li>
+                <li>外观样式：深色主题，半透明边框，圆角设计</li>
+            </ul>
+
+            <h3>组件说明</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>组件</th>
+                        <th>功能说明</th>
+                        <th>交互方式</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>分辨率下拉框</td>
+                        <td>选择录制视频的分辨率</td>
+                        <td>点击展开选项列表</td>
+                    </tr>
+                    <tr>
+                        <td>帧率下拉框</td>
+                        <td>选择录制帧率</td>
+                        <td>点击展开选项列表</td>
+                    </tr>
+                    <tr>
+                        <td>音频复选框</td>
+                        <td>启用或禁用系统音频、麦克风录制</td>
+                        <td>点击切换勾选状态</td>
+                    </tr>
+                    <tr>
+                        <td>开始录制按钮</td>
+                        <td>启动或停止录制</td>
+                        <td>点击切换录制状态</td>
+                    </tr>
+                    <tr>
+                        <td>状态栏</td>
+                        <td>显示当前录制状态和时长</td>
+                        <td>仅供显示</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>状态转换</h3>
+            <div class="state-machine">
+                <span class="state">空闲</span>
+                <span class="state-arrow">-</span>
+                <span class="state active">录制中</span>
+                <span class="state-arrow">-</span>
+                <span class="state paused">暂停中</span>
+                <span class="state-arrow">-</span>
+                <span class="state">空闲</span>
+            </div>
+            <p style="text-align: center; color: var(--text-muted); font-size: 0.85rem; margin-top: 8px;">点击按钮在上述状态间切换</p>
+        </section>
+
+        <!-- 三、悬浮监视窗 -->
+        <section>
+            <h2>悬浮监视窗 <span class="section-badge">Overlay</span></h2>
+
+            <div class="window-mockup overlay-window">
+                <div class="window-titlebar" style="padding: 6px 10px;">
+                    <div class="window-controls" style="transform: scale(0.75);">
+                        <span class="window-control close"></span>
+                    </div>
+                </div>
+                <div class="window-content overlay-content">
+                    <div class="overlay-status">
+                        <span class="overlay-dot"></span>
+                        <span style="color: var(--accent-success); font-weight: 500; font-size: 0.85rem;">录制中</span>
+                    </div>
+                    <div class="overlay-time">00:05:23</div>
+                    <div class="overlay-stats">
+                        <div class="stat-item">2560x1440</div>
+                        <div class="stat-item">60 FPS</div>
+                        <div class="stat-item">NVENC</div>
+                        <div class="stat-item">156 次键</div>
+                        <div class="stat-item">42 次点</div>
+                        <div class="stat-item">200 Hz</div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>窗口规格</h3>
+            <ul class="feature-list">
+                <li>窗口位置：默认显示在屏幕右上角</li>
+                <li>窗口尺寸：200 x 120 像素（固定尺寸）</li>
+                <li>拖动功能：用户可拖动到任意位置</li>
+                <li>位置记忆：关闭应用后记住位置，下次启动时恢复</li>
+                <li>排除捕获：使用 <code>SetWindowDisplayAffinity</code> 排除视频捕获</li>
+                <li>自动隐藏：停止录制后 3 秒自动隐藏</li>
+            </ul>
+
+            <h3>显示内容</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>显示项</th>
+                        <th>内容说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>状态指示</td>
+                        <td>绿色圆点 + "录制中" / 黄色 + "暂停中" / 灰色 + "空闲"</td>
+                    </tr>
+                    <tr>
+                        <td>录制时长</td>
+                        <td>实时更新的录制时间，格式为 HH:MM:SS</td>
+                    </tr>
+                    <tr>
+                        <td>分辨率 / 帧率 / 编码器</td>
+                        <td>当前录制所使用的参数</td>
+                    </tr>
+                    <tr>
+                        <td>键盘计数</td>
+                        <td>录制期间键盘按键总次数</td>
+                    </tr>
+                    <tr>
+                        <td>点击计数</td>
+                        <td>录制期间鼠标点击总次数</td>
+                    </tr>
+                    <tr>
+                        <td>移动采样</td>
+                        <td>鼠标移动采样率，固定为 200 Hz</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- 四、录制流程 -->
+        <section>
+            <h2>录制流程 <span class="section-badge">Flow</span></h2>
+
+            <h3>启动录制</h3>
+            <div class="flow-diagram">
+                <div class="flow-row">
+                    <div class="flow-step">
+                        <div class="step-num">Step 1</div>
+                        <div class="step-text">验证设置</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 2</div>
+                        <div class="step-text">启动 Native Core</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 3</div>
+                        <div class="step-text">发送 start 指令</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 4</div>
+                        <div class="step-text">显示录制中</div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>停止录制</h3>
+            <div class="flow-diagram">
+                <div class="flow-row">
+                    <div class="flow-step">
+                        <div class="step-num">Step 1</div>
+                        <div class="step-text">发送 stop 指令</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 2</div>
+                        <div class="step-text">接收输出文件路径</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 3</div>
+                        <div class="step-text">显示录制完成</div>
+                    </div>
+                    <span class="flow-arrow">-&gt;</span>
+                    <div class="flow-step">
+                        <div class="step-num">Step 4</div>
+                        <div class="step-text">悬浮窗 3 秒后隐藏</div>
+                    </div>
+                </div>
+            </div>
+
+            <h3>输出文件</h3>
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <h4>video.mkv</h4>
+                    <p>录制的视频文件，包含音视频轨</p>
+                </div>
+                <div class="overview-card">
+                    <h4>actions.csv</h4>
+                    <p>键盘和鼠标点击事件记录</p>
+                </div>
+                <div class="overview-card">
+                    <h4>movements.csv</h4>
+                    <p>鼠标移动轨迹，200Hz 采样率</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 五、异常处理与进程管理 -->
+        <section>
+            <h2>进程保护机制 <span class="section-badge">Protection</span></h2>
+
+            <h3>进程架构</h3>
+            <div class="architecture">
+                <div class="arch-box highlight">
+                    <h4>Electron 主进程</h4>
+                    <p>RecorderService<br>子进程管理 | 心跳检测<br>自动重启 | 日志记录</p>
+                </div>
+                <div class="arch-connector">&lt;- stdio JSON -&gt;</div>
+                <div class="arch-box">
+                    <h4>recorder_core.exe</h4>
+                    <p>OBS 录制引擎<br>输入事件捕获<br>CSV 文件写入</p>
+                </div>
+            </div>
+
+            <h3>心跳检测机制</h3>
+            <div class="heartbeat">
+                <div class="heartbeat-item">
+                    <div class="heartbeat-icon">A</div>
+                    <div class="heartbeat-label">Native Core</div>
+                </div>
+                <span class="heartbeat-arrow">-&gt;</span>
+                <div class="heartbeat-item">
+                    <div class="heartbeat-icon pulse">3s</div>
+                    <div class="heartbeat-label">心跳间隔</div>
+                </div>
+                <span class="heartbeat-arrow">-&gt;</span>
+                <div class="heartbeat-item">
+                    <div class="heartbeat-icon">B</div>
+                    <div class="heartbeat-label">主进程</div>
+                </div>
+                <span class="heartbeat-arrow">-&gt;</span>
+                <div class="heartbeat-item">
+                    <div class="heartbeat-icon" style="border-color: var(--accent-error);">5s</div>
+                    <div class="heartbeat-label">超时判定</div>
+                </div>
+                <span class="heartbeat-arrow">-&gt;</span>
+                <div class="heartbeat-item">
+                    <div class="heartbeat-icon action">R</div>
+                    <div class="heartbeat-label">自动重启</div>
+                </div>
+            </div>
+
+            <h3>日志管理</h3>
+            <div class="log-path">
+                %APPDATA%/ScreenCraft/logs/recorder_YYYYMMDD_HHMMSS.log
+            </div>
+
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>场景</th>
+                        <th>处理方式</th>
+                        <th>用户反馈</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Native Core 意外退出</td>
+                        <td>3 秒后自动重启进程</td>
+                        <td>悬浮窗显示"正在重连..."</td>
+                    </tr>
+                    <tr>
+                        <td>Native Core 崩溃</td>
+                        <td>记录错误日志，重启进程</td>
+                        <td>弹出错误提示</td>
+                    </tr>
+                    <tr>
+                        <td>主进程异常退出</td>
+                        <td>Native Core 随主进程一起退出</td>
+                        <td>-</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- 六、系统托盘 -->
+        <section>
+            <h2>系统托盘 <span class="section-badge">Tray</span></h2>
+            <p>应用最小化时显示在系统托盘区域，右键点击显示菜单</p>
+
+            <div class="tray-menu">
+                <div class="tray-item">
+                    <span>W</span> 打开主窗口
+                </div>
+                <div class="tray-divider"></div>
+                <div class="tray-item recording">
+                    <span>R</span> 录制中: 00:05
+                </div>
+                <div class="tray-divider"></div>
+                <div class="tray-item">
+                    <span>E</span> 退出
+                </div>
+            </div>
+            <p style="text-align: center; color: var(--text-muted); font-size: 0.8rem;">注：W=Window, R=Recording, E=Exit</p>
+        </section>
+
+        <!-- 七、快捷键 -->
+        <section>
+            <h2>快捷键 <span class="section-badge">Shortcuts</span></h2>
+            <div class="shortcuts-grid">
+                <div class="shortcut-item">
+                    <div class="shortcut-keys">
+                        <span class="key">Ctrl</span>
+                        <span class="key">Shift</span>
+                        <span class="key">R</span>
+                    </div>
+                    <span class="shortcut-desc">开始 / 停止录制</span>
+                </div>
+                <div class="shortcut-item">
+                    <div class="shortcut-keys">
+                        <span class="key">Ctrl</span>
+                        <span class="key">Shift</span>
+                        <span class="key">P</span>
+                    </div>
+                    <span class="shortcut-desc">暂停 / 恢复录制</span>
+                </div>
+                <div class="shortcut-item">
+                    <div class="shortcut-keys">
+                        <span class="key">Esc</span>
+                    </div>
+                    <span class="shortcut-desc">停止录制并退出</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 八、验收标准 -->
+        <section>
+            <h2>验收标准 <span class="section-badge">Checklist</span></h2>
+
+            <h3>功能验收</h3>
+            <div class="checklist">
+                <div class="check-item"><span class="check-box"></span>可以选择分辨率和帧率</div>
+                <div class="check-item"><span class="check-box"></span>可以选择是否录制系统音频和麦克风</div>
+                <div class="check-item"><span class="check-box"></span>可以设置保存路径</div>
+                <div class="check-item"><span class="check-box"></span>点击开始按钮后录制启动</div>
+                <div class="check-item"><span class="check-box"></span>悬浮窗正确显示录制状态</div>
+                <div class="check-item"><span class="check-box"></span>悬浮窗可以拖动到任意位置</div>
+                <div class="check-item"><span class="check-box"></span>暂停 / 恢复功能正常</div>
+                <div class="check-item"><span class="check-box"></span>录制完成后生成 3 个文件</div>
+                <div class="check-item"><span class="check-box"></span>系统托盘功能正常</div>
+                <div class="check-item"><span class="check-box"></span>快捷键功能正常</div>
+            </div>
+
+            <h3>异常处理验收</h3>
+            <div class="checklist">
+                <div class="check-item"><span class="check-box"></span>Native Core 崩溃后自动重启</div>
+                <div class="check-item"><span class="check-box"></span>主进程异常退出时 Native Core 一起退出</div>
+                <div class="check-item"><span class="check-box"></span>日志正确记录</div>
+            </div>
+
+            <h3>UI 验收</h3>
+            <div class="checklist">
+                <div class="check-item"><span class="check-box"></span>主窗口显示正确</div>
+                <div class="check-item"><span class="check-box"></span>悬浮窗显示正确</div>
+                <div class="check-item"><span class="check-box"></span>悬浮窗不会录入视频</div>
+                <div class="check-item"><span class="check-box"></span>窗口可以拖动</div>
+            </div>
+        </section>
+
+        <footer>
+            <p>ScreenCraft 产品原型设计文档</p>
+        </footer>
+    </div>
+</body>
+</html>
