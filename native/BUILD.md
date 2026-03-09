@@ -24,13 +24,13 @@ git submodule update --init --recursive
 
 ```powershell
 cd native/scripts
-.\download-obs.ps1 -Version "30.2.3" -OutputDir "..\..\obs-download"
+.\download-obs.ps1 -Version "32.0.4" -OutputDir "..\..\obs-download"
 ```
 
 ### 方式 B: 手动下载
 
 1. 访问 https://github.com/obsproject/obs-studio/releases
-2. 下载 `OBS-Studio-30.2.3-portable.zip`
+2. 下载 `OBS-Studio-32.0.4-portable.zip`
 3. 解压到项目根目录的 `obs-download` 文件夹
 
 ---
@@ -39,7 +39,7 @@ cd native/scripts
 
 ```powershell
 cd native/scripts
-.\setup-obs.ps1 -ObsDir "..\..\obs-download\extracted\OBS-Studio-30.2.3" -DistDir "..\dist"
+.\setup-obs.ps1 -ObsDir "..\..\obs-download\extracted\OBS-Studio-32.0.4" -DistDir "..\dist"
 ```
 
 这会将以下文件复制到 `native/dist/`:
@@ -146,7 +146,7 @@ cd native/scripts
 .\download-obs.ps1
 
 # 3. 提取 DLL
-$obsDir = "..\..\obs-download\extracted\OBS-Studio-30.2.3"
+$obsDir = "..\..\obs-download\extracted\OBS-Studio-32.0.4"
 $distDir = "..\dist"
 .\setup-obs.ps1 -ObsDir $obsDir -DistDir $distDir
 
