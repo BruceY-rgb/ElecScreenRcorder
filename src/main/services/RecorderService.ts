@@ -1,7 +1,8 @@
 import { spawn, ChildProcess } from 'child_process';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, app } from 'electron';
 import readline from 'readline';
 import path from 'path';
+import fs from 'fs';
 
 export interface RecordingConfig {
   resolution: { width: number; height: number };
@@ -12,7 +13,7 @@ export interface RecordingConfig {
 }
 
 export interface RecordingStatus {
-  state: 'idle' | 'recording' | 'paused';
+  state: 'idle' | 'recording' | 'paused' | 'reconnecting';
   duration: number;
   frameCount: number;
 }
@@ -35,7 +36,12 @@ export interface FinishResult {
   duration: number;
 }
 
-type RecordingState = 'idle' | 'recording' | 'paused';
+type RecordingState = 'idle' | 'recording' | 'paused' | 'reconnecting';
+
+// Heartbeat configuration
+const HEARTBEAT_INTERVAL = 3000; // 3 seconds
+const HEARTBEAT_TIMEOUT = 5000;  // 5 seconds timeout
+const RESTART_DELAY = 3000;       // 3 seconds before restart
 
 export class RecorderService {
   private child: ChildProcess | null = null;
@@ -45,8 +51,49 @@ export class RecorderService {
   private duration: number = 0;
   private frameCount: number = 0;
 
+  // Heartbeat tracking
+  private lastHeartbeat: number = 0;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private isRestarting: boolean = false;
+
+  // Logging
+  private logPath: string;
+  private logStream: fs.WriteStream | null = null;
+
   constructor(nativeCorePath: string) {
     this.nativeCorePath = nativeCorePath;
+    this.setupLogging();
+  }
+
+  private setupLogging(): void {
+    const userDataPath = app.getPath('userData');
+    const logsDir = path.join(userDataPath, 'logs');
+
+    // Ensure logs directory exists
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    this.logPath = path.join(logsDir, `recorder_${timestamp}.log`);
+    this.logStream = fs.createWriteStream(this.logPath, { flags: 'a' });
+
+    this.log('INFO', 'RecorderService initialized');
+  }
+
+  private log(level: string, message: string): void {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] [${level}] ${message}\n`;
+
+    // Write to file
+    this.logStream?.write(logMessage);
+
+    // Also write to console
+    if (level === 'ERROR') {
+      console.error(logMessage);
+    } else {
+      console.log(logMessage);
+    }
   }
 
   async start(config: RecordingConfig): Promise<void> {
@@ -77,7 +124,9 @@ export class RecorderService {
     this.duration = 0;
     this.frameCount = 0;
 
+    this.log('INFO', `Recording started: ${config.resolution.width}x${config.resolution.height} @ ${config.fps}fps`);
     this.broadcastStatus();
+    this.startHeartbeat();
   }
 
   async stop(): Promise<FinishResult> {
@@ -92,12 +141,11 @@ export class RecorderService {
     const command = { action: 'stop' };
     this.child.stdin?.write(JSON.stringify(command) + '\n');
 
-    // Wait for finish response (handled by on('line'))
-
     this.state = 'idle';
+    this.stopHeartbeat();
+    this.log('INFO', 'Recording stopped');
     this.broadcastStatus();
 
-    // Return placeholder - actual result comes via message
     return {
       videoPath: '',
       actionsPath: '',
@@ -113,6 +161,7 @@ export class RecorderService {
 
     this.child?.stdin?.write(JSON.stringify({ action: 'pause' }) + '\n');
     this.state = 'paused';
+    this.log('INFO', 'Recording paused');
     this.broadcastStatus();
   }
 
@@ -123,6 +172,7 @@ export class RecorderService {
 
     this.child?.stdin?.write(JSON.stringify({ action: 'resume' }) + '\n');
     this.state = 'recording';
+    this.log('INFO', 'Recording resumed');
     this.broadcastStatus();
   }
 
@@ -138,7 +188,6 @@ export class RecorderService {
       const command = { action: 'sysinfo' };
       this.child.stdin?.write(JSON.stringify(command) + '\n');
 
-      // Handle response via message handler
       const timeout = setTimeout(() => {
         reject(new Error('System info request timeout'));
       }, 5000);
@@ -165,6 +214,8 @@ export class RecorderService {
       return;
     }
 
+    this.log('INFO', `Starting native core: ${this.nativeCorePath}`);
+
     this.child = spawn(this.nativeCorePath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -179,22 +230,142 @@ export class RecorderService {
       this.handleMessage(line);
     });
 
-    // Setup stderr listener
+    // Setup stderr listener - capture to log file
     this.child.stderr?.on('data', (data) => {
-      console.error('[Native Core]', data.toString());
+      const message = data.toString().trim();
+      if (message) {
+        this.log('ERROR', `[Native Core] ${message}`);
+      }
     });
 
-    this.child.on('exit', (code) => {
-      console.log(`Native core exited with code ${code}`);
-      this.child = null;
+    this.child.on('exit', (code, signal) => {
+      this.log('INFO', `Native core exited with code ${code}, signal ${signal}`);
+      this.handleProcessExit(code, signal);
+    });
+
+    this.child.on('error', (err) => {
+      this.log('ERROR', `Native core error: ${err.message}`);
+      this.handleProcessError(err);
+    });
+  }
+
+  private handleProcessExit(code: number | null, signal: string | null): void {
+    const wasRecording = this.state === 'recording' || this.state === 'paused';
+    this.child = null;
+
+    if (wasRecording && !this.isRestarting) {
+      // Recording was in progress, trigger restart
+      this.state = 'reconnecting';
+      this.broadcastStatus();
+      this.log('ERROR', 'Native core crashed during recording, attempting restart...');
+
+      // Notify UI
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send('recording-error', '录制进程异常退出，正在尝试重启...');
+      });
+
+      // Schedule restart
+      setTimeout(() => {
+        this.attemptRestart();
+      }, RESTART_DELAY);
+    } else {
+      this.state = 'idle';
+    }
+
+    this.stopHeartbeat();
+    this.broadcastStatus();
+  }
+
+  private handleProcessError(err: Error): void {
+    this.log('ERROR', `Process error: ${err.message}`);
+
+    if (this.state === 'recording' || this.state === 'paused') {
+      this.state = 'reconnecting';
+      this.broadcastStatus();
+
+      setTimeout(() => {
+        this.attemptRestart();
+      }, RESTART_DELAY);
+    }
+  }
+
+  private attemptRestart(): void {
+    if (this.isRestarting) {
+      return;
+    }
+
+    this.isRestarting = true;
+    this.log('INFO', 'Attempting to restart native core...');
+
+    try {
+      this.ensureNativeCore();
+
+      // Give it time to initialize
+      setTimeout(() => {
+        this.isRestarting = false;
+
+        if (this.child) {
+          this.log('INFO', 'Native core restarted successfully');
+          // Send status query to verify it's responsive
+          this.child.stdin?.write(JSON.stringify({ action: 'status' }) + '\n');
+        } else {
+          this.log('ERROR', 'Failed to restart native core');
+          this.state = 'idle';
+          this.broadcastStatus();
+        }
+      }, 2000);
+    } catch (err) {
+      this.isRestarting = false;
+      this.log('ERROR', `Restart failed: ${(err as Error).message}`);
       this.state = 'idle';
       this.broadcastStatus();
-    });
+    }
+  }
+
+  // Heartbeat system
+  private startHeartbeat(): void {
+    this.lastHeartbeat = Date.now();
+
+    this.heartbeatTimer = setInterval(() => {
+      this.checkHeartbeat();
+    }, HEARTBEAT_INTERVAL);
+
+    this.log('INFO', 'Heartbeat started');
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+      this.log('INFO', 'Heartbeat stopped');
+    }
+  }
+
+  private checkHeartbeat(): void {
+    const now = Date.now();
+    const elapsed = now - this.lastHeartbeat;
+
+    if (elapsed > HEARTBEAT_TIMEOUT) {
+      this.log('ERROR', `Heartbeat timeout: ${elapsed}ms (expected < ${HEARTBEAT_TIMEOUT}ms)`);
+
+      // Process may be hung, try to kill and restart
+      if (this.child && !this.child.killed) {
+        this.child.kill();
+      }
+
+      this.handleProcessExit(null, 'heartbeat-timeout');
+    }
   }
 
   private handleMessage(line: string): void {
     try {
       const msg = JSON.parse(line);
+
+      // Handle heartbeat from native core
+      if (msg.type === 'heartbeat') {
+        this.lastHeartbeat = Date.now();
+        return;
+      }
 
       switch (msg.type) {
         case 'status':
@@ -226,6 +397,7 @@ export class RecorderService {
   }
 
   private broadcastError(error: string): void {
+    this.log('ERROR', `Recording error: ${error}`);
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('recording-error', error);
     });
@@ -239,22 +411,37 @@ export class RecorderService {
       duration: data.duration || 0,
     };
 
+    this.log('INFO', `Recording finished: ${result.videoPath}`);
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('recording-finished', result);
     });
   }
 
   destroy(): void {
+    this.stopHeartbeat();
+
     if (this.child) {
-      this.child.stdin?.write(JSON.stringify({ action: 'quit' }) + '\n');
+      this.log('INFO', 'Destroying recorder service');
+
+      try {
+        this.child.stdin?.write(JSON.stringify({ action: 'quit' }) + '\n');
+      } catch {
+        // Ignore errors during shutdown
+      }
 
       // Force kill after timeout
       setTimeout(() => {
-        if (this.child) {
+        if (this.child && !this.child.killed) {
           this.child.kill();
           this.child = null;
         }
       }, 2000);
+    }
+
+    // Close log file
+    if (this.logStream) {
+      this.logStream.end();
+      this.logStream = null;
     }
   }
 }
