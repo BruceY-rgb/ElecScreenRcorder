@@ -26,7 +26,7 @@ struct RecordingConfig {
     int width = 1920;
     int height = 1080;
     int fps = 60;
-    int videoBitrate = 15000;  // kbps for 2K60, 10000 for 1080p60
+    int videoBitrate = 15000;  // kbps (configurable)
     int audioBitrate = 192;    // kbps per track
     std::string savePath;
     bool separateAudio = false;

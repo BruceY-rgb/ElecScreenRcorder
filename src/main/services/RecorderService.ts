@@ -3,10 +3,12 @@ import { BrowserWindow, app } from 'electron';
 import readline from 'readline';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 
 export interface RecordingConfig {
   resolution: { width: number; height: number };
   fps: number;
+  bitrate?: number;
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
@@ -36,16 +38,35 @@ export interface FinishResult {
   duration: number;
 }
 
+export interface InputState {
+  anyKeyPressed: boolean;
+  mouseButtonPressed: boolean;
+  pressedKeyCount: number;
+}
+
+// Communication mode
+export type CommMode = 'local' | 'remote';
+
+// Recorder configuration
+export interface RecorderConfig {
+  mode: CommMode;
+  nativeCorePath?: string;
+  remoteHost?: string;
+  remotePort?: number;
+}
+
 type RecordingState = 'idle' | 'recording' | 'paused' | 'reconnecting';
 
 // Heartbeat configuration
 const HEARTBEAT_INTERVAL = 3000; // 3 seconds
 const HEARTBEAT_TIMEOUT = 5000;  // 5 seconds timeout
 const RESTART_DELAY = 3000;       // 3 seconds before restart
+const DEFAULT_REMOTE_PORT = 8765;
 
 export class RecorderService {
   private child: ChildProcess | null = null;
-  private nativeCorePath: string;
+  private socket: net.Socket | null = null;
+  private config: RecorderConfig;
   private state: RecordingState = 'idle';
   private recordingStartTime: number = 0;
   private duration: number = 0;
@@ -56,12 +77,15 @@ export class RecorderService {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private isRestarting: boolean = false;
 
+  // Buffer for socket data
+  private socketBuffer: string = '';
+
   // Logging
   private logPath: string;
   private logStream: fs.WriteStream | null = null;
 
-  constructor(nativeCorePath: string) {
-    this.nativeCorePath = nativeCorePath;
+  constructor(config: RecorderConfig) {
+    this.config = config;
     this.setupLogging();
   }
 
@@ -78,7 +102,7 @@ export class RecorderService {
     this.logPath = path.join(logsDir, `recorder_${timestamp}.log`);
     this.logStream = fs.createWriteStream(this.logPath, { flags: 'a' });
 
-    this.log('INFO', 'RecorderService initialized');
+    this.log('INFO', `RecorderService initialized in ${this.config.mode} mode`);
   }
 
   private log(level: string, message: string): void {
@@ -96,15 +120,23 @@ export class RecorderService {
     }
   }
 
+  // Send command to native core (handles both local and remote)
+  private sendCommand(command: object): void {
+    const json = JSON.stringify(command) + '\n';
+
+    if (this.config.mode === 'local' && this.child?.stdin) {
+      this.child.stdin.write(json);
+    } else if (this.config.mode === 'remote' && this.socket) {
+      this.socket.write(json);
+    }
+  }
+
   async start(config: RecordingConfig): Promise<void> {
     if (this.state !== 'idle') {
       throw new Error(`Cannot start recording: already ${this.state}`);
     }
 
-    this.ensureNativeCore();
-    if (!this.child) {
-      throw new Error('Failed to start native core');
-    }
+    await this.connect();
 
     const command = {
       action: 'start',
@@ -112,13 +144,14 @@ export class RecorderService {
         width: config.resolution.width,
         height: config.resolution.height,
         fps: config.fps,
+        bitrate: config.bitrate || 15000,
         savePath: config.savePath,
         separateAudio: config.separateAudio,
         remuxToMp4: config.remuxToMp4,
       },
     };
 
-    this.child.stdin?.write(JSON.stringify(command) + '\n');
+    this.sendCommand(command);
     this.state = 'recording';
     this.recordingStartTime = Date.now();
     this.duration = 0;
@@ -134,12 +167,7 @@ export class RecorderService {
       throw new Error('Cannot stop: not recording');
     }
 
-    if (!this.child) {
-      throw new Error('Native core not running');
-    }
-
-    const command = { action: 'stop' };
-    this.child.stdin?.write(JSON.stringify(command) + '\n');
+    this.sendCommand({ action: 'stop' });
 
     this.state = 'idle';
     this.stopHeartbeat();
@@ -159,7 +187,7 @@ export class RecorderService {
       throw new Error(`Cannot pause: state is ${this.state}`);
     }
 
-    this.child?.stdin?.write(JSON.stringify({ action: 'pause' }) + '\n');
+    this.sendCommand({ action: 'pause' });
     this.state = 'paused';
     this.log('INFO', 'Recording paused');
     this.broadcastStatus();
@@ -170,34 +198,29 @@ export class RecorderService {
       throw new Error(`Cannot resume: state is ${this.state}`);
     }
 
-    this.child?.stdin?.write(JSON.stringify({ action: 'resume' }) + '\n');
+    this.sendCommand({ action: 'resume' });
     this.state = 'recording';
     this.log('INFO', 'Recording resumed');
     this.broadcastStatus();
   }
 
   async getSystemInfo(): Promise<SystemInfo> {
-    this.ensureNativeCore();
+    await this.connect();
 
     return new Promise((resolve, reject) => {
-      if (!this.child) {
-        reject(new Error('Native core not running'));
-        return;
-      }
-
-      const command = { action: 'sysinfo' };
-      this.child.stdin?.write(JSON.stringify(command) + '\n');
+      this.sendCommand({ action: 'sysinfo' });
 
       const timeout = setTimeout(() => {
         reject(new Error('System info request timeout'));
       }, 5000);
 
-      const handler = (line: string) => {
+      // One-time handler for response
+      const handler = (data: string) => {
         try {
-          const msg = JSON.parse(line);
+          const msg = JSON.parse(data);
           if (msg.type === 'sysinfo' && msg.data) {
             clearTimeout(timeout);
-            this.child?.stdout?.off('line', handler);
+            this.removeDataListener(handler);
             resolve(msg.data);
           }
         } catch {
@@ -205,18 +228,94 @@ export class RecorderService {
         }
       };
 
-      this.child.stdout?.on('line', handler);
+      this.addDataListener(handler);
     });
   }
 
-  private ensureNativeCore(): void {
+  async checkInputState(): Promise<InputState> {
+    await this.connect();
+
+    return new Promise((resolve, reject) => {
+      this.sendCommand({ action: 'check_input' });
+
+      const timeout = setTimeout(() => {
+        reject(new Error('Input state request timeout'));
+      }, 5000);
+
+      const handler = (data: string) => {
+        try {
+          const msg = JSON.parse(data);
+          if (msg.type === 'input_state') {
+            clearTimeout(timeout);
+            this.removeDataListener(handler);
+            resolve({
+              anyKeyPressed: msg.anyKeyPressed,
+              mouseButtonPressed: msg.mouseButtonPressed,
+              pressedKeyCount: msg.pressedKeyCount,
+            });
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      this.addDataListener(handler);
+    });
+  }
+
+  private addDataListener(handler: (data: string) => void): void {
+    if (this.config.mode === 'local' && this.child?.stdout) {
+      const rl = readline.createInterface({ input: this.child.stdout });
+      rl.on('line', handler);
+    } else if (this.config.mode === 'remote' && this.socket) {
+      this.socket.on('data', (data: Buffer) => {
+        this.socketBuffer += data.toString();
+        // Process complete lines
+        const lines = this.socketBuffer.split('\n');
+        this.socketBuffer = lines.pop() || '';
+        lines.forEach(line => {
+          if (line.trim()) {
+            handler(line);
+          }
+        });
+      });
+    }
+  }
+
+  private removeDataListener(handler: (data: string) => void): void {
+    // For socket mode, we use a different approach - the listener is always active
+    // This is a simplified implementation
+  }
+
+  // Connect to native core (local process or remote socket)
+  private async connect(): Promise<void> {
+    if (this.config.mode === 'local') {
+      if (!this.child) {
+        this.ensureLocalCore();
+      }
+    } else {
+      if (!this.socket || !this.isSocketConnected()) {
+        await this.connectToRemote();
+      }
+    }
+  }
+
+  private isSocketConnected(): boolean {
+    return this.socket !== null && !this.socket.destroyed;
+  }
+
+  private ensureLocalCore(): void {
     if (this.child) {
       return;
     }
 
-    this.log('INFO', `Starting native core: ${this.nativeCorePath}`);
+    if (!this.config.nativeCorePath) {
+      throw new Error('Native core path not configured');
+    }
 
-    this.child = spawn(this.nativeCorePath, [], {
+    this.log('INFO', `Starting native core: ${this.config.nativeCorePath}`);
+
+    this.child = spawn(this.config.nativeCorePath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -230,7 +329,7 @@ export class RecorderService {
       this.handleMessage(line);
     });
 
-    // Setup stderr listener - capture to log file
+    // Setup stderr listener
     this.child.stderr?.on('data', (data) => {
       const message = data.toString().trim();
       if (message) {
@@ -249,22 +348,80 @@ export class RecorderService {
     });
   }
 
+  private connectToRemote(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const host = this.config.remoteHost || 'localhost';
+      const port = this.config.remotePort || DEFAULT_REMOTE_PORT;
+
+      this.log('INFO', `Connecting to remote recorder at ${host}:${port}`);
+
+      this.socket = net.createConnection({ host, port }, () => {
+        this.log('INFO', 'Connected to remote recorder');
+        this.startSocketListeners();
+        resolve();
+      });
+
+      this.socket.on('error', (err) => {
+        this.log('ERROR', `Socket error: ${err.message}`);
+        reject(err);
+      });
+
+      this.socket.on('close', () => {
+        this.log('INFO', 'Socket closed');
+        this.handleSocketClose();
+      });
+    });
+  }
+
+  private startSocketListeners(): void {
+    if (!this.socket) return;
+
+    this.socket.on('data', (data: Buffer) => {
+      this.socketBuffer += data.toString();
+      // Process complete lines
+      const lines = this.socketBuffer.split('\n');
+      this.socketBuffer = lines.pop() || '';
+      lines.forEach(line => {
+        if (line.trim()) {
+          this.handleMessage(line);
+        }
+      });
+    });
+  }
+
+  private handleSocketClose(): void {
+    const wasRecording = this.state === 'recording' || this.state === 'paused';
+
+    if (wasRecording && !this.isRestarting) {
+      this.state = 'reconnecting';
+      this.broadcastStatus();
+      this.log('ERROR', 'Remote connection lost during recording');
+
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send('recording-error', '远程连接中断');
+      });
+    } else {
+      this.state = 'idle';
+    }
+
+    this.socket = null;
+    this.stopHeartbeat();
+    this.broadcastStatus();
+  }
+
   private handleProcessExit(code: number | null, signal: string | null): void {
     const wasRecording = this.state === 'recording' || this.state === 'paused';
     this.child = null;
 
     if (wasRecording && !this.isRestarting) {
-      // Recording was in progress, trigger restart
       this.state = 'reconnecting';
       this.broadcastStatus();
-      this.log('ERROR', 'Native core crashed during recording, attempting restart...');
+      this.log('ERROR', 'Native core crashed during recording');
 
-      // Notify UI
       BrowserWindow.getAllWindows().forEach((win) => {
-        win.webContents.send('recording-error', '录制进程异常退出，正在尝试重启...');
+        win.webContents.send('recording-error', '录制进程异常退出');
       });
 
-      // Schedule restart
       setTimeout(() => {
         this.attemptRestart();
       }, RESTART_DELAY);
@@ -295,31 +452,30 @@ export class RecorderService {
     }
 
     this.isRestarting = true;
-    this.log('INFO', 'Attempting to restart native core...');
+    this.log('INFO', 'Attempting to restart...');
 
-    try {
-      this.ensureNativeCore();
+    setTimeout(() => {
+      this.isRestarting = false;
 
-      // Give it time to initialize
-      setTimeout(() => {
-        this.isRestarting = false;
-
+      if (this.config.mode === 'local') {
+        this.ensureLocalCore();
         if (this.child) {
           this.log('INFO', 'Native core restarted successfully');
-          // Send status query to verify it's responsive
-          this.child.stdin?.write(JSON.stringify({ action: 'status' }) + '\n');
         } else {
           this.log('ERROR', 'Failed to restart native core');
           this.state = 'idle';
           this.broadcastStatus();
         }
-      }, 2000);
-    } catch (err) {
-      this.isRestarting = false;
-      this.log('ERROR', `Restart failed: ${(err as Error).message}`);
-      this.state = 'idle';
-      this.broadcastStatus();
-    }
+      } else {
+        this.connectToRemote().then(() => {
+          this.log('INFO', 'Remote connection restored');
+        }).catch((err) => {
+          this.log('ERROR', `Failed to reconnect: ${err.message}`);
+          this.state = 'idle';
+          this.broadcastStatus();
+        });
+      }
+    }, 2000);
   }
 
   // Heartbeat system
@@ -346,14 +502,18 @@ export class RecorderService {
     const elapsed = now - this.lastHeartbeat;
 
     if (elapsed > HEARTBEAT_TIMEOUT) {
-      this.log('ERROR', `Heartbeat timeout: ${elapsed}ms (expected < ${HEARTBEAT_TIMEOUT}ms)`);
+      this.log('ERROR', `Heartbeat timeout: ${elapsed}ms`);
 
-      // Process may be hung, try to kill and restart
-      if (this.child && !this.child.killed) {
+      if (this.config.mode === 'local' && this.child && !this.child.killed) {
         this.child.kill();
+      } else if (this.config.mode === 'remote' && this.socket) {
+        this.socket.destroy();
       }
 
       this.handleProcessExit(null, 'heartbeat-timeout');
+    } else {
+      // Send a simple command to check connection is alive
+      this.sendCommand({ action: 'status' });
     }
   }
 
@@ -420,20 +580,32 @@ export class RecorderService {
   destroy(): void {
     this.stopHeartbeat();
 
-    if (this.child) {
+    if (this.config.mode === 'local' && this.child) {
       this.log('INFO', 'Destroying recorder service');
-
       try {
         this.child.stdin?.write(JSON.stringify({ action: 'quit' }) + '\n');
       } catch {
         // Ignore errors during shutdown
       }
 
-      // Force kill after timeout
       setTimeout(() => {
         if (this.child && !this.child.killed) {
           this.child.kill();
           this.child = null;
+        }
+      }, 2000);
+    } else if (this.config.mode === 'remote' && this.socket) {
+      this.log('INFO', 'Closing remote connection');
+      try {
+        this.socket.write(JSON.stringify({ action: 'quit' }) + '\n');
+      } catch {
+        // Ignore errors during shutdown
+      }
+
+      setTimeout(() => {
+        if (this.socket && !this.socket.destroyed) {
+          this.socket.destroy();
+          this.socket = null;
         }
       }, 2000);
     }

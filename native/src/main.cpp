@@ -2,7 +2,9 @@
  * recorder_core.exe - C++ Native Core Entry Point
  *
  * This is the main entry point for the screen recording tool's native core.
- * Communication with Electron happens via stdio JSON protocol.
+ * Communication with Electron happens via:
+ *   - stdio JSON protocol (default, for local mode)
+ *   - TCP Socket (with --socket <port> argument, for remote development)
  *
  * Key setup:
  * - Binary mode for stdin/stdout (prevents \n -> \r\n conversion)
@@ -22,7 +24,15 @@
 #include <iostream>
 #include <string>
 #include <memory>
-#include <windows.h>
+#include <vector>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <queue>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 // Application state
 enum class AppState {
@@ -30,6 +40,206 @@ enum class AppState {
     RECORDING,
     PAUSED,
     STOPPED
+};
+
+// Communication mode
+enum class CommMode {
+    STDIO,  // Default: local stdio mode
+    SOCKET  // Remote: TCP socket mode
+};
+
+// Abstract output interface for both stdio and socket
+class IOutputHandler {
+public:
+    virtual ~IOutputHandler() = default;
+    virtual void send(const std::string& json) = 0;
+};
+
+// Stdio output handler (default)
+class StdioOutputHandler : public IOutputHandler {
+public:
+    void send(const std::string& json) override {
+        std::cout << json << "\n" << std::flush;
+    }
+};
+
+// Socket output handler
+class SocketOutputHandler : public IOutputHandler {
+private:
+    SOCKET clientSocket_;
+public:
+    SocketOutputHandler(SOCKET sock) : clientSocket_(sock) {}
+
+    void send(const std::string& json) override {
+        if (clientSocket_ != INVALID_SOCKET) {
+            send(clientSocket_, json.c_str(), json.length(), 0);
+            send(clientSocket_, "\n", 1, 0);
+        }
+    }
+};
+
+// Socket server manager
+class SocketServer {
+private:
+    SOCKET listenSocket_;
+    SOCKET clientSocket_;
+    std::atomic<bool> running_;
+    std::mutex clientMutex_;
+    IOutputHandler* outputHandler_;
+    std::queue<std::string> messageQueue_;
+    std::mutex queueMutex_;
+    std::thread acceptThread_;
+
+public:
+    SocketServer() : listenSocket_(INVALID_SOCKET), clientSocket_(INVALID_SOCKET),
+                     running_(false), outputHandler_(nullptr) {}
+
+    ~SocketServer() {
+        stop();
+    }
+
+    bool start(int port) {
+        // Initialize Winsock
+        WSADATA wsaData;
+        int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (result != 0) {
+            std::cerr << "[SOCKET] WSAStartup failed: " << result << "\n";
+            return false;
+        }
+
+        // Create socket
+        listenSocket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSocket_ == INVALID_SOCKET) {
+            std::cerr << "[SOCKET] socket failed: " << WSAGetLastError() << "\n";
+            WSACleanup();
+            return false;
+        }
+
+        // Bind to port
+        sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(static_cast<u_short>(port));
+
+        result = bind(listenSocket_, (sockaddr*)&addr, sizeof(addr));
+        if (result == SOCKET_ERROR) {
+            std::cerr << "[SOCKET] bind failed: " << WSAGetLastError() << "\n";
+            closesocket(listenSocket_);
+            WSACleanup();
+            return false;
+        }
+
+        // Listen
+        result = listen(listenSocket_, SOMAXCONN);
+        if (result == SOCKET_ERROR) {
+            std::cerr << "[SOCKET] listen failed: " << WSAGetLastError() << "\n";
+            closesocket(listenSocket_);
+            WSACleanup();
+            return false;
+        }
+
+        running_ = true;
+        std::cerr << "[SOCKET] Server listening on port " << port << "\n";
+
+        return true;
+    }
+
+    bool acceptClient() {
+        if (listenSocket_ == INVALID_SOCKET) {
+            return false;
+        }
+
+        clientSocket_ = accept(listenSocket_, nullptr, nullptr);
+        if (clientSocket_ == INVALID_SOCKET) {
+            if (running_) {
+                std::cerr << "[SOCKET] accept failed: " << WSAGetLastError() << "\n";
+            }
+            return false;
+        }
+
+        // Create socket output handler
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        outputHandler_ = new SocketOutputHandler(clientSocket_);
+
+        std::cerr << "[SOCKET] Client connected\n";
+        return true;
+    }
+
+    IOutputHandler* getOutputHandler() {
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        return outputHandler_;
+    }
+
+    bool isClientConnected() {
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        return clientSocket_ != INVALID_SOCKET;
+    }
+
+    bool readLine(std::string& line) {
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        if (clientSocket_ == INVALID_SOCKET) {
+            return false;
+        }
+
+        char buffer[4096];
+        int result = recv(clientSocket_, buffer, sizeof(buffer) - 1, 0);
+        if (result <= 0) {
+            if (result == 0) {
+                std::cerr << "[SOCKET] Client disconnected\n";
+            } else {
+                std::cerr << "[SOCKET] recv failed: " << WSAGetLastError() << "\n";
+            }
+            return false;
+        }
+
+        buffer[result] = '\0';
+
+        // Find newline
+        char* newline = strchr(buffer, '\n');
+        if (newline) {
+            *newline = '\0';
+        }
+
+        // Remove carriage return if present
+        char* cr = strchr(buffer, '\r');
+        if (cr) {
+            *cr = '\0';
+        }
+
+        line = buffer;
+        return true;
+    }
+
+    void disconnectClient() {
+        std::lock_guard<std::mutex> lock(clientMutex_);
+        if (clientSocket_ != INVALID_SOCKET) {
+            shutdown(clientSocket_, SD_BOTH);
+            closesocket(clientSocket_);
+            clientSocket_ = INVALID_SOCKET;
+        }
+        if (outputHandler_) {
+            delete outputHandler_;
+            outputHandler_ = nullptr;
+        }
+    }
+
+    void stop() {
+        running_ = false;
+
+        disconnectClient();
+
+        if (listenSocket_ != INVALID_SOCKET) {
+            closesocket(listenSocket_);
+            listenSocket_ = INVALID_SOCKET;
+        }
+
+        WSACleanup();
+        std::cerr << "[SOCKET] Server stopped\n";
+    }
+
+    bool isRunning() const {
+        return running_;
+    }
 };
 
 class RecorderApp {
@@ -42,20 +252,46 @@ private:
     int64_t pauseBeginTime_ = 0;
     int64_t totalPausedDuration_ = 0;
 
+    // Communication mode
+    CommMode commMode_ = CommMode::STDIO;
+    IOutputHandler* outputHandler_ = nullptr;
+    SocketServer* socketServer_ = nullptr;
+
+    // For socket mode, we need a thread-safe queue for responses
+    std::mutex responseQueueMutex_;
+    std::queue<std::string> responseQueue_;
+
 public:
-    RecorderApp() = default;
+    RecorderApp() : outputHandler_(new StdioOutputHandler()) {}
 
     ~RecorderApp() {
         // Ensure cleanup on destruction
         if (state_ == AppState::RECORDING || state_ == AppState::PAUSED) {
             stopRecording();
         }
+        if (outputHandler_ && commMode_ == CommMode::STDIO) {
+            delete outputHandler_;
+        }
     }
 
     AppState getState() const { return state_; }
 
+    void setSocketMode(SocketServer* server) {
+        commMode_ = CommMode::SOCKET;
+        socketServer_ = server;
+        // For socket mode, responses are handled differently
+    }
+
     void sendResponse(const std::string& json) {
-        std::cout << json << "\n" << std::flush;
+        if (commMode_ == CommMode::STDIO) {
+            outputHandler_->send(json);
+        } else {
+            // Socket mode: use the server's output handler
+            IOutputHandler* handler = socketServer_->getOutputHandler();
+            if (handler) {
+                handler->send(json);
+            }
+        }
     }
 
     void sendDebug(const std::string& msg) {
@@ -107,7 +343,7 @@ public:
         obsConfig.width = config.width;
         obsConfig.height = config.height;
         obsConfig.fps = config.fps;
-        obsConfig.videoBitrate = (config.height >= 1440) ? 15000 : 10000;
+        obsConfig.videoBitrate = config.bitrate > 0 ? config.bitrate : 15000;
         obsConfig.savePath = config.savePath;
         obsConfig.separateAudio = config.separateAudio;
         obsConfig.remuxToMp4 = config.remuxToMp4;
@@ -256,6 +492,11 @@ public:
             case CommandType::SYSINFO:
                 handleSysInfo();
                 break;
+            case CommandType::CHECK_INPUT: {
+                InputState inputState = getCurrentInputState();
+                sendResponse(createInputStateResponse(inputState));
+                break;
+            }
             case CommandType::QUIT:
                 // Ensure recording is stopped before quit
                 if (state_ == AppState::RECORDING || state_ == AppState::PAUSED) {
@@ -285,11 +526,59 @@ public:
     bool shouldContinue() const {
         return state_ != AppState::STOPPED;
     }
+
+    bool isSocketMode() const {
+        return commMode_ == CommMode::SOCKET;
+    }
 };
 
-int main() {
-    // CRITICAL: Setup binary mode first (before any I/O)
-    setupBinaryMode();
+// Parse command line arguments
+struct CommandLineArgs {
+    CommMode mode = CommMode::STDIO;
+    int socketPort = 8765;
+};
+
+CommandLineArgs parseArgs(int argc, char* argv[]) {
+    CommandLineArgs args;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+
+        if (arg == "--socket" && i + 1 < argc) {
+            args.mode = CommMode::SOCKET;
+            args.socketPort = std::stoi(argv[++i]);
+        } else if (arg == "--socket") {
+            args.mode = CommMode::SOCKET;
+            args.socketPort = 8765;  // Default port
+        } else if (arg == "--stdio") {
+            args.mode = CommMode::STDIO;
+        } else if (arg == "--port" && i + 1 < argc) {
+            args.socketPort = std::stoi(argv[++i]);
+        }
+    }
+
+    return args;
+}
+
+int main(int argc, char* argv[]) {
+    // Parse command line arguments
+    CommandLineArgs args = parseArgs(argc, argv);
+
+    // If socket mode, initialize socket server first
+    SocketServer* socketServer = nullptr;
+    if (args.mode == CommMode::SOCKET) {
+        socketServer = new SocketServer();
+        if (!socketServer->start(args.socketPort)) {
+            std::cerr << "[MAIN] Failed to start socket server\n";
+            delete socketServer;
+            return 1;
+        }
+    }
+
+    // CRITICAL: Setup binary mode first (only for stdio mode)
+    if (args.mode == CommMode::STDIO) {
+        setupBinaryMode();
+    }
 
     // Setup DPI awareness for accurate mouse coordinates
     setupDpiAwareness();
@@ -317,28 +606,74 @@ int main() {
     // Create application instance
     RecorderApp app;
 
+    // If socket mode, set it on the app
+    if (args.mode == CommMode::SOCKET) {
+        app.setSocketMode(socketServer);
+    }
+
     // Send ready status
     app.sendResponse(createStatusResponse("ready"));
 
     // Main command loop
-    std::string line;
-    while (app.shouldContinue()) {
-        if (!std::getline(std::cin, line)) {
-            // EOF or error
-            break;
-        }
+    if (args.mode == CommMode::STDIO) {
+        // Original stdio mode
+        std::string line;
+        while (app.shouldContinue()) {
+            if (!std::getline(std::cin, line)) {
+                // EOF or error
+                break;
+            }
 
-        if (line.empty()) {
-            continue;
-        }
+            if (line.empty()) {
+                continue;
+            }
 
-        app.processLine(line);
+            app.processLine(line);
+        }
+    } else {
+        // Socket mode
+        while (app.shouldContinue()) {
+            // Wait for client connection
+            if (!socketServer->isClientConnected()) {
+                std::cerr << "[MAIN] Waiting for client connection...\n";
+                if (!socketServer->acceptClient()) {
+                    // Error or server stopped
+                    break;
+                }
+                // Send ready status again after connection
+                app.sendResponse(createStatusResponse("ready"));
+            }
+
+            // Read and process commands
+            std::string line;
+            if (!socketServer->readLine(line)) {
+                // Client disconnected
+                socketServer->disconnectClient();
+                continue;
+            }
+
+            if (line.empty()) {
+                continue;
+            }
+
+            app.processLine(line);
+
+            // Check if we should continue (app might have received QUIT)
+            if (!app.shouldContinue()) {
+                break;
+            }
+        }
     }
 
     // Cleanup
     shutdownRecorder();
     shutdownCsvWriter();
     cleanupHighResTimer();
+
+    if (socketServer) {
+        socketServer->stop();
+        delete socketServer;
+    }
 
     return 0;
 }

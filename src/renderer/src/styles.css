@@ -176,3 +176,88 @@ body {
 .overlay .duration {
   font-family: monospace;
 }
+
+/* Warning banner */
+.warning-banner {
+  background: #ff6b35;
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+/* Config section headings */
+.config-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #aaa;
+  width: 100%;
+  border-bottom: 1px solid #3a3a3a;
+  padding-bottom: 8px;
+}
+
+/* Hotkey configuration */
+.hotkey-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.hotkey-config label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hotkey-config input {
+  width: 120px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid #3a3a3a;
+  background: #1a1a1a;
+  color: #ffffff;
+  text-align: center;
+  font-family: monospace;
+}
+
+.hotkey-config input:focus {
+  outline: none;
+  border-color: #4CAF50;
+}
+
+.hint {
+  font-size: 12px;
+  color: #666;
+  margin: 0 0 12px 0;
+}
+
+/* Button styles */
+.start-btn {
+  background: #4CAF50 !important;
+}
+
+.start-btn:hover:not(:disabled) {
+  background: #45a049 !important;
+}
+
+.stop-btn {
+  background: #f44336 !important;
+}
+
+.stop-btn:hover:not(:disabled) {
+  background: #da190b !important;
+}
+
+/* Resolution/FPS/Bitrate selects */
+.config-section select {
+  min-width: 180px;
+}

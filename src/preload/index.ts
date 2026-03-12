@@ -32,6 +32,12 @@ export interface FinishResult {
   duration: number;
 }
 
+export interface InputState {
+  anyKeyPressed: boolean;
+  mouseButtonPressed: boolean;
+  pressedKeyCount: number;
+}
+
 const electronAPI = {
   startRecording: (config: RecordingConfig): Promise<void> =>
     ipcRenderer.invoke('recorder:start', config),
@@ -47,6 +53,9 @@ const electronAPI = {
 
   getSystemInfo: (): Promise<SystemInfo> =>
     ipcRenderer.invoke('system:info'),
+
+  checkInputState: (): Promise<InputState> =>
+    ipcRenderer.invoke('recorder:checkInput'),
 
   onRecordingStatus: (callback: (status: RecordingStatus) => void) => {
     ipcRenderer.on('recording-status', (_, data) => callback(data));

@@ -13,8 +13,18 @@ enum class CommandType {
     PAUSE,
     RESUME,
     SYSINFO,
+    CHECK_INPUT,
     QUIT,
     UNKNOWN
+};
+
+/**
+ * Current input state structure
+ */
+struct InputState {
+    bool anyKeyPressed = false;
+    bool mouseButtonPressed = false;
+    int pressedKeyCount = 0;
 };
 
 /**
@@ -24,6 +34,7 @@ struct StartConfig {
     int width = 1920;                // Screen width
     int height = 1080;               // Screen height
     int fps = 60;                    // Frame rate
+    int bitrate = 15000;             // Video bitrate in kbps
     std::string savePath;             // Output file path
     bool separateAudio = false;       // Separate audio tracks
     bool remuxToMp4 = false;         // Convert to MP4 after recording
@@ -87,6 +98,12 @@ std::string createFinishResponse(const std::string& videoPath,
  * @param message Error message
  */
 std::string createErrorResponse(const std::string& message);
+
+/**
+ * Create an input state response JSON string
+ * @param state InputState struct with current input status
+ */
+std::string createInputStateResponse(const InputState& state);
 
 /**
  * Escape a string for JSON (handle special characters)

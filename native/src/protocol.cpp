@@ -37,6 +37,7 @@ CommandType parseActionType(const json& j) {
     if (action == "pause") return CommandType::PAUSE;
     if (action == "resume") return CommandType::RESUME;
     if (action == "sysinfo") return CommandType::SYSINFO;
+    if (action == "check_input") return CommandType::CHECK_INPUT;
     if (action == "quit") return CommandType::QUIT;
 
     return CommandType::UNKNOWN;
@@ -100,6 +101,9 @@ std::optional<Command> parseCommand(const std::string& input) {
         if (config.contains("fps") && config["fps"].is_number()) {
             cmd.config.fps = config["fps"].get<int>();
         }
+        if (config.contains("bitrate") && config["bitrate"].is_number()) {
+            cmd.config.bitrate = config["bitrate"].get<int>();
+        }
         if (config.contains("savePath") && config["savePath"].is_string()) {
             cmd.config.savePath = config["savePath"].get<std::string>();
         }
@@ -156,5 +160,14 @@ std::string createErrorResponse(const std::string& message) {
     json j;
     j["type"] = "error";
     j["msg"] = message;
+    return j.dump();
+}
+
+std::string createInputStateResponse(const InputState& state) {
+    json j;
+    j["type"] = "input_state";
+    j["anyKeyPressed"] = state.anyKeyPressed;
+    j["mouseButtonPressed"] = state.mouseButtonPressed;
+    j["pressedKeyCount"] = state.pressedKeyCount;
     return j.dump();
 }

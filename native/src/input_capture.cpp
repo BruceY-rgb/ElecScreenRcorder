@@ -1,4 +1,5 @@
 #include "input_capture.h"
+#include "protocol.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -50,6 +51,91 @@ int64_t getHighPrecisionTimestamp() {
     uli.LowPart = ft.dwLowDateTime;
     uli.HighPart = ft.dwHighDateTime;
     return static_cast<int64_t>(uli.QuadPart / 10000);
+}
+
+// Get current input state (any keys or mouse buttons pressed)
+InputState getCurrentInputState() {
+    InputState state;
+    state.anyKeyPressed = false;
+    state.mouseButtonPressed = false;
+    state.pressedKeyCount = 0;
+
+    // Check standard A-Z, 0-9 keys
+    for (int vk = VK_A; vk <= VK_Z; vk++) {
+        if (GetAsyncKeyState(vk) & 0x8000) {
+            state.anyKeyPressed = true;
+            state.pressedKeyCount++;
+        }
+    }
+    for (int vk = VK_0; vk <= VK_9; vk++) {
+        if (GetAsyncKeyState(vk) & 0x8000) {
+            state.anyKeyPressed = true;
+            state.pressedKeyCount++;
+        }
+    }
+    // Check function keys F1-F24
+    for (int vk = VK_F1; vk <= VK_F24; vk++) {
+        if (GetAsyncKeyState(vk) & 0x8000) {
+            state.anyKeyPressed = true;
+            state.pressedKeyCount++;
+        }
+    }
+    // Check modifier keys
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_MENU) & 0x8000) {  // Alt
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_LWIN) & 0x8000 || GetAsyncKeyState(VK_RWIN) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    // Check space, enter, tab, escape
+    if (GetAsyncKeyState(VK_SPACE) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_RETURN) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_TAB) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+    // Check arrow keys
+    if (GetAsyncKeyState(VK_LEFT) & 0x8000 || GetAsyncKeyState(VK_RIGHT) & 0x8000 ||
+        GetAsyncKeyState(VK_UP) & 0x8000 || GetAsyncKeyState(VK_DOWN) & 0x8000) {
+        state.anyKeyPressed = true;
+        state.pressedKeyCount++;
+    }
+
+    // Check mouse buttons (left, right, middle)
+    if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) {
+        state.mouseButtonPressed = true;
+        state.anyKeyPressed = true;
+    }
+    if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) {
+        state.mouseButtonPressed = true;
+        state.anyKeyPressed = true;
+    }
+    if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) {
+        state.mouseButtonPressed = true;
+        state.anyKeyPressed = true;
+    }
+
+    return state;
 }
 
 // Get modifier key states

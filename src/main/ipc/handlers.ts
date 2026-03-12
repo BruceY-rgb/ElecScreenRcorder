@@ -21,4 +21,8 @@ export function registerHandlers(recorderService: RecorderService): void {
   ipcMain.handle('system:info', async () => {
     return await recorderService.getSystemInfo();
   });
+
+  ipcMain.handle('recorder:checkInput', async () => {
+    return await recorderService.checkInputState();
+  });
 }

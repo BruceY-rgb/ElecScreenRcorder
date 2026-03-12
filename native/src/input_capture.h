@@ -115,3 +115,11 @@ void resetPauseTracking();
  * Uses GetSystemTimePreciseAsFileTime()
  */
 int64_t getHighPrecisionTimestamp();
+
+/**
+ * Get current input state (keys and mouse buttons pressed)
+ * Uses GetAsyncKeyState to check current key state without affecting it
+ * @return InputState struct with current input status
+ */
+struct InputState;
+InputState getCurrentInputState();

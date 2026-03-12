@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 export interface RecordingConfig {
   resolution: { width: number; height: number };
   fps: number;
+  bitrate: number;
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
@@ -30,6 +31,12 @@ export interface FinishResult {
   actionsPath: string;
   movementsPath: string;
   duration: number;
+}
+
+export interface InputState {
+  anyKeyPressed: boolean;
+  mouseButtonPressed: boolean;
+  pressedKeyCount: number;
 }
 
 export function useRecorder() {
@@ -92,6 +99,15 @@ export function useRecorder() {
     }
   }, []);
 
+  const checkInputState = useCallback(async (): Promise<InputState> => {
+    try {
+      return await window.electronAPI.checkInputState();
+    } catch (err) {
+      console.error('Failed to check input state:', err);
+      return { anyKeyPressed: false, mouseButtonPressed: false, pressedKeyCount: 0 };
+    }
+  }, []);
+
   // Derived state
   const isRecording = status.state === 'recording';
   const isPaused = status.state === 'paused';
@@ -123,5 +139,6 @@ export function useRecorder() {
     stopRecording,
     pauseRecording,
     resumeRecording,
+    checkInputState,
   };
 }
