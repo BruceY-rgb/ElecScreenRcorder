@@ -18,8 +18,12 @@ namespace {
 
 // Trim whitespace from string
 std::string trim(const std::string& s) {
-    auto start = std::find_if(s.begin(), s.end(), [](unsigned char c) { return !std::isspace(c); });
-    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c) }).base();
+    auto start = std::find_if(s.begin(), s.end(), [](unsigned char c) {
+        return !std::isspace(c);
+    });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char c) {
+        return !std::isspace(c);
+    }).base();
     return (start < end) ? std::string(start, end) : "";
 }
 

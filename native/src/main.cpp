@@ -14,6 +14,11 @@
  * - CSV writer for input events
  */
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "protocol.h"
 #include "utils.h"
 #include "input_capture.h"
@@ -29,8 +34,6 @@
 #include <atomic>
 #include <mutex>
 #include <queue>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 #pragma comment(lib, "ws2_32.lib")
 

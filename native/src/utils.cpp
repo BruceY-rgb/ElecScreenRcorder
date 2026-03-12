@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#include <io.h>
 
 int64_t getHighPrecisionTimestamp() {
     FILETIME ft;

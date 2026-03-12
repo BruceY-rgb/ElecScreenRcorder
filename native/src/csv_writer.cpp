@@ -1,5 +1,6 @@
 #include "csv_writer.h"
 #include "input_capture.h"
+#include "../third_party/readerwriterqueue/readerwriterqueue.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -95,10 +96,10 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 g_actionsBuffer += ",";  // button (not used for keyboard)
                 g_actionsBuffer += std::to_string(evt.keycode) + ",";
                 g_actionsBuffer += escapeCsvField(std::string(1, evt.keyChar)) + ",";
-                g_actionsBuffer += (evt.altKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.ctrlKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.shiftKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.metaKey ? "1" : "0") + "\n";
+                g_actionsBuffer += std::string(evt.altKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.ctrlKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.shiftKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.metaKey ? "1" : "0") + "\n";
             }
         }
 
@@ -121,10 +122,10 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 g_actionsBuffer += std::to_string(evt.button) + ",";
                 g_actionsBuffer += ",";  // keycode (not used for mouse)
                 g_actionsBuffer += ",";  // keyChar (not used for mouse)
-                g_actionsBuffer += (evt.altKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.ctrlKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.shiftKey ? "1" : "0") + std::string(",");
-                g_actionsBuffer += (evt.metaKey ? "1" : "0") + "\n";
+                g_actionsBuffer += std::string(evt.altKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.ctrlKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.shiftKey ? "1" : "0") + ",";
+                g_actionsBuffer += std::string(evt.metaKey ? "1" : "0") + "\n";
             }
         }
 

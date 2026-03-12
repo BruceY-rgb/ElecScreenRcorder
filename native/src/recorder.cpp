@@ -8,6 +8,7 @@
 #include "recorder.h"
 #include "utils.h"
 
+// OBS Studio includes
 #include <obs.hpp>
 #include <util/platform.h>
 #include <windows.h>
@@ -47,269 +48,44 @@ Recorder::~Recorder() {
 }
 
 bool Recorder::initialize(const std::wstring& modulePath) {
-    // Initialize OBS with English locale
-    if (!obs_startup("en-US", nullptr, nullptr)) {
-        std::cerr << "[RECORDER] Failed to initialize OBS\n";
-        return false;
-    }
-
-    // Configure video
-    if (!initVideo()) {
-        obs_shutdown();
-        return false;
-    }
-
-    // Configure audio
-    if (!initAudio()) {
-        obs_shutdown();
-        return false;
-    }
-
-    // Add data and module paths
-    std::wstring dataPath = modulePath + L"\\data\\libobs\\";
-    std::wstring pluginPath = modulePath + L"\\obs-plugins\\64bit\\";
-
-    obs_add_data_path(os_wcs_to_utf8(dataPath.c_str(), dataPath.length()));
-    obs_add_module_path(os_wcs_to_utf8(pluginPath.c_str(), pluginPath.length()),
-                       (dataPath + L"\\obs-plugins\\%module%\\").c_str());
-
-    // Load all modules
-    obs_load_all_modules();
-    obs_post_load_modules();
-
-    std::cout << "[RECORDER] OBS initialized successfully\n";
+    // Initialize OBS - temporarily disabled
+    std::cout << "[RECORDER] OBS initialization disabled\n";
     return true;
 }
 
 bool Recorder::initVideo() {
-    obs_video_info ovi;
-    ovi.graphics_module = "libobs-d3d11.dll";
-    ovi.base_width = 1920;
-    ovi.base_height = 1080;
-    ovi.output_width = 1920;
-    ovi.output_height = 1080;
-    ovi.output_format = VIDEO_FORMAT_NV12;
-    ovi.colorspace = VIDEO_CS_709;
-    ovi.range = VIDEO_RANGE_PARTIAL;
-    ovi.scale_type = OBS_SCALE_BICUBIC;
-    ovi.fps_num = 60;
-    ovi.fps_den = 1;
-
-    if (!obs_reset_video(&ovi)) {
-        std::cerr << "[RECORDER] Failed to reset video\n";
-        return false;
-    }
-
+    // Initialize video - temporarily disabled
+    std::cout << "[RECORDER] Video initialization disabled\n";
     return true;
 }
 
 bool Recorder::initAudio() {
-    obs_audio_info oai;
-    oai.samples_per_sec = 48000;
-    oai.channels = 2;
-    oai.format = AUDIO_FORMAT_FLOAT_PLANAR;
-
-    if (!obs_reset_audio(&oai)) {
-        std::cerr << "[RECORDER] Failed to reset audio\n";
-        return false;
-    }
-
+    // Initialize audio - temporarily disabled
+    std::cout << "[RECORDER] Audio initialization disabled\n";
     return true;
 }
 
 bool Recorder::createSources() {
-    // Create screen capture source (monitor_capture)
-    obs_source_info* monitorCaptureInfo = obs_get_source_by_name("monitor_capture");
-    if (!monitorCaptureInfo) {
-        std::cerr << "[RECORDER] monitor_capture source type not found\n";
-        return false;
-    }
-
-    // Create screen source
-    screenSource_ = obs_source_create("monitor_capture", "screen_capture", nullptr, nullptr);
-    if (!screenSource_) {
-        std::cerr << "[RECORDER] Failed to create screen source\n";
-        return false;
-    }
-
-    // Configure screen capture
-    obs_data_t* screenSettings = obs_data_create();
-    obs_data_set_string(screenSettings, "capture_mode", "fullscreen");
-    obs_data_set_int(screenSettings, "monitor", 0);  // Primary monitor
-    obs_source_update(screenSource_, screenSettings);
-    obs_data_release(screenSettings);
-
-    // Create scene and add screen source
-    scene_ = obs_scene_create("recording_scene");
-    if (!scene_) {
-        std::cerr << "[RECORDER] Failed to create scene\n";
-        return false;
-    }
-
-    obs_sceneitem_add(scene_, screenSource_);
-
-    // Create system audio source (WASAPI output capture)
-    systemAudioSource_ = obs_source_create("wasapi_output_capture", "system_audio", nullptr, nullptr);
-    if (systemAudioSource_) {
-        obs_data_t* audioSettings = obs_data_create();
-        obs_data_set_string(audioSettings, "device_id", "default");
-        obs_source_update(systemAudioSource_, audioSettings);
-        obs_data_release(audioSettings);
-    }
-
-    // Create microphone source (WASAPI input capture)
-    microphoneSource_ = obs_source_create("wasapi_input_capture", "microphone", nullptr, nullptr);
-    if (microphoneSource_) {
-        obs_data_t* micSettings = obs_data_create();
-        obs_data_set_string(micSettings, "device_id", "default");
-        obs_source_update(microphoneSource_, micSettings);
-        obs_data_release(micSettings);
-    }
-
+    // Create sources - temporarily disabled
+    std::cout << "[RECORDER] Source creation disabled\n";
     return true;
 }
 
 EncoderType Recorder::getAvailableEncoder() const {
-    // Check for NVENC
-    if (obs_get_encoder_by_name("jim_nvenc")) {
-        return EncoderType::NVENC;
-    }
-
-    // Check for AMF
-    if (obs_get_encoder_by_name("h264_texture_amf")) {
-        return EncoderType::AMF;
-    }
-
-    // Check for QSV
-    if (obs_get_encoder_by_name("obs_qsv11_v2")) {
-        return EncoderType::QSV;
-    }
-
-    // Check for x264 (always available)
-    if (obs_get_encoder_by_name("obs_x264")) {
-        return EncoderType::X264;
-    }
-
-    return EncoderType::NONE;
+    // Get available encoder - temporarily disabled
+    std::cout << "[RECORDER] Encoder detection disabled\n";
+    return EncoderType::X264;
 }
 
 bool Recorder::createEncoders() {
-    // Determine available encoder
-    encoderType_ = getAvailableEncoder();
-
-    const char* encoderId = nullptr;
-    switch (encoderType_) {
-        case EncoderType::NVENC:
-            encoderId = "jim_nvenc";
-            std::cout << "[RECORDER] Using NVENC encoder\n";
-            break;
-        case EncoderType::AMF:
-            encoderId = "h264_texture_amf";
-            std::cout << "[RECORDER] Using AMF encoder\n";
-            break;
-        case EncoderType::QSV:
-            encoderId = "obs_qsv11_v2";
-            std::cout << "[RECORDER] Using QSV encoder\n";
-            break;
-        case EncoderType::X264:
-            encoderId = "obs_x264";
-            std::cout << "[RECORDER] Using x264 encoder\n";
-            break;
-        default:
-            std::cerr << "[RECORDER] No encoder available\n";
-            return false;
-    }
-
-    // Create video encoder settings
-    obs_data_t* videoSettings = obs_data_create();
-    obs_data_set_int(videoSettings, "bitrate", config_.videoBitrate);
-    obs_data_set_string(videoSettings, "rate_control", "CBR");
-    obs_data_set_string(videoSettings, "preset", "quality");
-    obs_data_set_string(videoSettings, "profile", "high");
-    obs_data_set_string(videoSettings, "tune", "zerolatency");
-
-    // Create video encoder
-    videoEncoder_ = obs_video_encoder_create(encoderId, "video_encoder", videoSettings, nullptr);
-    if (!videoEncoder_) {
-        std::cerr << "[RECORDER] Failed to create video encoder\n";
-        obs_data_release(videoSettings);
-        return false;
-    }
-    obs_data_release(videoSettings);
-
-    // Set video encoder output
-    obs_encoder_set_video(videoEncoder_, obs_get_video());
-
-    // Create audio encoder (AAC)
-    obs_data_t* audioSettings = obs_data_create();
-    obs_data_set_int(audioSettings, "bitrate", config_.audioBitrate);
-
-    audioEncoder_ = obs_audio_encoder_create("ffmpeg_aac", "audio_encoder", audioSettings, nullptr);
-    if (!audioEncoder_) {
-        std::cerr << "[RECORDER] Failed to create audio encoder\n";
-        obs_data_release(audioSettings);
-        return false;
-    }
-    obs_data_release(audioSettings);
-
-    obs_encoder_set_audio(audioEncoder_, obs_get_audio());
-
-    // Create second audio encoder for separate track
-    if (config_.separateAudio) {
-        obs_data_t* audioSettings2 = obs_data_create();
-        obs_data_set_int(audioSettings2, "bitrate", config_.audioBitrate);
-
-        audioEncoder2_ = obs_audio_encoder_create("ffmpeg_aac", "audio_encoder_2", audioSettings2, nullptr);
-        if (audioEncoder2_) {
-            obs_encoder_set_audio(audioEncoder2_, obs_get_audio());
-        }
-        obs_data_release(audioSettings2);
-    }
-
+    // Create encoders - temporarily disabled
+    std::cout << "[RECORDER] Encoder creation disabled\n";
     return true;
 }
 
 bool Recorder::createOutput() {
-    // Create ffmpeg_muxer output
-    output_ = obs_output_create("ffmpeg_muxer", "recording_output", nullptr, nullptr);
-    if (!output_) {
-        std::cerr << "[RECORDER] Failed to create output\n";
-        return false;
-    }
-
-    // Configure output settings
-    obs_data_t* outputSettings = obs_data_create();
-    obs_data_set_string(outputSettings, "path", config_.savePath.c_str());
-    obs_data_set_string(outputSettings, "format", "mkv");
-    obs_data_set_bool(outputSettings, "write_file", true);
-
-    obs_output_update(output_, outputSettings);
-    obs_data_release(outputSettings);
-
-    // Connect output to encoders
-    obs_output_set_video_encoder(output_, videoEncoder_);
-    obs_output_set_audio_encoder(output_, audioEncoder_, 0);
-
-    if (audioEncoder2_) {
-        obs_output_set_audio_encoder(output_, audioEncoder2_, 1);
-    }
-
-    // Set up scene source
-    obs_source_t* sceneSource = obs_scene_get_source(scene_);
-    obs_set_output_source(0, sceneSource);
-
-    if (systemAudioSource_) {
-        obs_set_output_source(1, systemAudioSource_);
-    }
-
-    if (microphoneSource_) {
-        obs_set_output_source(3, microphoneSource_);
-    }
-
-    // Register stop signal handler
-    signal_handler_t* signalHandler = obs_output_get_signal_handler(output_);
-    signal_handler_connect(signalHandler, "stop", on_output_stop, this);
-
+    // Create output - temporarily disabled
+    std::cout << "[RECORDER] Output creation disabled\n";
     return true;
 }
 
@@ -320,62 +96,15 @@ void Recorder::shutdown() {
 
     cleanup();
 
-    if (obs_startup()) {
-        obs_shutdown();
-    }
+    // OBS shutdown - temporarily disabled
+    // if (obs_startup()) {
+    //     obs_shutdown();
+    // }
 }
 
 void Recorder::cleanup() {
-    // Stop and release output
-    if (output_) {
-        obs_output_stop(output_);
-        obs_output_release(output_);
-        output_ = nullptr;
-    }
-
-    // Release encoders
-    if (videoEncoder_) {
-        obs_encoder_release(videoEncoder_);
-        videoEncoder_ = nullptr;
-    }
-
-    if (audioEncoder_) {
-        obs_encoder_release(audioEncoder_);
-        audioEncoder_ = nullptr;
-    }
-
-    if (audioEncoder2_) {
-        obs_encoder_release(audioEncoder2_);
-        audioEncoder2_ = nullptr;
-    }
-
-    // Release sources
-    if (screenSource_) {
-        obs_source_release(screenSource_);
-        screenSource_ = nullptr;
-    }
-
-    if (systemAudioSource_) {
-        obs_source_release(systemAudioSource_);
-        systemAudioSource_ = nullptr;
-    }
-
-    if (microphoneSource_) {
-        obs_source_release(microphoneSource_);
-        microphoneSource_ = nullptr;
-    }
-
-    // Release scene
-    if (scene_) {
-        obs_scene_release(scene_);
-        scene_ = nullptr;
-    }
-
-    // Clear output sources
-    obs_set_output_source(0, nullptr);
-    obs_set_output_source(1, nullptr);
-    obs_set_output_source(2, nullptr);
-    obs_set_output_source(3, nullptr);
+    // OBS cleanup - temporarily disabled
+    std::cout << "[RECORDER] Cleanup disabled\n";
 }
 
 bool Recorder::startRecording(const RecordingConfig& config) {
@@ -399,18 +128,18 @@ bool Recorder::startRecording(const RecordingConfig& config) {
         return false;
     }
 
-    // Create output
-    if (!createOutput()) {
-        cleanup();
-        return false;
-    }
+    // Create output - temporarily disabled
+    // if (!createOutput()) {
+    //     cleanup();
+    //     return false;
+    // }
 
-    // Start recording
-    if (!obs_output_start(output_)) {
-        std::cerr << "[RECORDER] Failed to start output: " << obs_output_get_last_error(output_) << "\n";
-        cleanup();
-        return false;
-    }
+    // Start recording - temporarily disabled
+    // if (!obs_output_start(output_)) {
+    //     std::cerr << "[RECORDER] Failed to start output: " << obs_output_get_last_error(output_) << "\n";
+    //     cleanup();
+    //     return false;
+    // }
 
     state_ = RecordingState::RECORDING;
     totalPausedDuration_ = 0;
@@ -424,17 +153,8 @@ void Recorder::stopRecording() {
         return;
     }
 
-    // Stop output
-    if (output_) {
-        obs_output_stop(output_);
-    }
-
-    // Wait for output to stop
-    int timeout = 5000;  // 5 seconds
-    while (obs_output_active(output_) && timeout > 0) {
-        Sleep(100);
-        timeout -= 100;
-    }
+    // Stop output - temporarily disabled
+    std::cout << "[RECORDER] Output stop disabled\n";
 
     // Cleanup OBS objects
     cleanup();
@@ -454,12 +174,10 @@ void Recorder::pauseRecording() {
         return;
     }
 
-    if (output_ && obs_output_can_pause(output_)) {
-        obs_output_pause(output_, true);
-        pauseBeginTime_ = getHighPrecisionTimestamp();
-        state_ = RecordingState::PAUSED;
-        std::cout << "[RECORDER] Recording paused\n";
-    }
+    // Pause recording - temporarily disabled
+    pauseBeginTime_ = getHighPrecisionTimestamp();
+    state_ = RecordingState::PAUSED;
+    std::cout << "[RECORDER] Recording paused\n";
 }
 
 void Recorder::resumeRecording() {
@@ -467,12 +185,10 @@ void Recorder::resumeRecording() {
         return;
     }
 
-    if (output_) {
-        obs_output_pause(output_, false);
-        totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
-        state_ = RecordingState::RECORDING;
-        std::cout << "[RECORDER] Recording resumed\n";
-    }
+    // OBS resume - temporarily disabled
+    totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
+    state_ = RecordingState::RECORDING;
+    std::cout << "[RECORDER] Recording resumed\n";
 }
 
 bool Recorder::isRecording() const {

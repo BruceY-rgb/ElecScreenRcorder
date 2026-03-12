@@ -123,6 +123,9 @@ public:
      */
     using StopCallback = void(*)(void*);
     void setStopCallback(StopCallback callback, void* userData);
+    
+    // Public methods for callbacks
+    void signal_stop(bool success);
 
 private:
     // OBS objects
@@ -157,7 +160,6 @@ private:
     bool createEncoders();
     bool createOutput();
     void cleanup();
-    void signal_stop(bool success);
 };
 
 /**

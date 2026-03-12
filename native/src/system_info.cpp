@@ -8,6 +8,7 @@
 #include "protocol.h"
 
 #include <windows.h>
+#include <ShellScalingApi.h>
 #include <dxgi1_2.h>
 #include <setupapi.h>
 #include <regstr.h>

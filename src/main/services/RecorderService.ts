@@ -535,6 +535,12 @@ export class RecorderService {
         case 'finish':
           this.broadcastFinish(msg);
           break;
+        case 'sysinfo':
+          // Sysinfo message is handled by the one-time listener in getSystemInfo
+          break;
+        case 'input_state':
+          // Input state message is handled by the one-time listener in checkInputState
+          break;
       }
     } catch {
       // Ignore parse errors

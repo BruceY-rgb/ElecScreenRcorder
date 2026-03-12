@@ -50,6 +50,7 @@ if(WIN32)
         setupapi.lib
         advapi32.lib
         kernel32.lib
+        Shcore.lib
     )
 
     # Set output directory
@@ -71,46 +72,44 @@ target_include_directories(recorder_core PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/readerwriterqueue
 )
 
-# OBS Studio configuration - use libobs from submodule
-set(OBS_STUDIO_DIR ${CMAKE_SOURCE_DIR}/third_party/obs-studio)
+# OBS Studio configuration - use prebuilt OBS from dist directory
+set(OBS_BIN_DIR ${CMAKE_SOURCE_DIR}/dist)
+set(OBS_INCLUDE_DIRS
+    "${CMAKE_SOURCE_DIR}/third_party/obs-studio/obs-studio-master/libobs"
+    "${CMAKE_SOURCE_DIR}/third_party/obs-studio/obs-studio-master/libobs/util"
+)
 
-if(EXISTS "${OBS_STUDIO_DIR}/libobs")
-    message(STATUS "OBS Studio: Using libobs from submodule")
+if(EXISTS "${OBS_BIN_DIR}/obs.dll")
+    message(STATUS "OBS Studio: Using prebuilt OBS from obs-download")
 
     # Include directories for OBS
-    target_include_directories(recorder_core PRIVATE
-        ${OBS_STUDIO_DIR}/libobs
-        ${OBS_STUDIO_DIR}/libutil
-        ${OBS_STUDIO_DIR}/deps/lzma
-        ${OBS_STUDIO_DIR}/deps/zlib
-        ${OBS_STUDIO_DIR}/deps/curl/include
+    target_include_directories(recorder_core PRIVATE ${OBS_INCLUDE_DIRS})
+
+    # Add OBS DLL directory to runtime path
+    target_link_directories(recorder_core PRIVATE ${OBS_BIN_DIR})
+
+    # Link against OBS DLL (using delay loading to avoid needing obs.lib)
+    target_link_libraries(recorder_core PRIVATE delayimp.lib)
+    set_target_properties(recorder_core PROPERTIES
+        LINK_FLAGS "/DELAYLOAD:obs.dll"
     )
 
-    # Find OBS library (need to build libobs first)
-    # For prebuilt OBS, use the .lib files from OBS Studio distribution
-    find_library(OBS_LIBRARY
-        NAMES obs libobs
-        PATHS ${OBS_STUDIO_DIR}/libobs/Release
-              ${OBS_STUDIO_DIR}/build/libobs/Release
-              ${CMAKE_SOURCE_DIR}/dist
-        NO_DEFAULT_PATH
-    )
-
-    if(OBS_LIBRARY)
-        message(STATUS "Found OBS library: ${OBS_LIBRARY}")
-        target_link_libraries(recorder_core PRIVATE ${OBS_LIBRARY})
-    else()
-        message(WARNING "OBS library not found. You need to build libobs or use prebuilt OBS DLLs.")
-        message(WARNING "Run the scripts in native/scripts/ to download and setup OBS DLLs.")
-    endif()
+    # Copy OBS DLLs to output directory
+    file(GLOB OBS_DLLS ${OBS_BIN_DIR}/*.dll)
+    foreach(DLL ${OBS_DLLS})
+        add_custom_command(TARGET recorder_core POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${DLL}
+            $<TARGET_FILE_DIR:recorder_core>
+        )
+    endforeach()
 
     # OBS uses C++11 atomics
     if(CMAKE_VERSION VERSION_LESS "3.21")
         target_compile_options(recorder_core PRIVATE /std:c++17)
     endif()
 else()
-    message(WARNING "OBS Studio submodule not found at: ${OBS_STUDIO_DIR}/libobs")
-    message(WARNING "Please run: git submodule update --init --recursive")
+    message(FATAL_ERROR "OBS DLL not found. Please run scripts/download-obs.ps1 to download OBS Studio.")
 endif()
 
 # Print configuration

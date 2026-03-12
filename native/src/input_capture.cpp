@@ -1,6 +1,96 @@
-#include "input_capture.h"
-#include "protocol.h"
 #include <windows.h>
+
+// Define virtual key codes if not already defined
+#ifndef VK_A
+#define VK_A 0x41
+#endif
+
+#ifndef VK_Z
+#define VK_Z 0x5A
+#endif
+
+#ifndef VK_0
+#define VK_0 0x30
+#endif
+
+#ifndef VK_9
+#define VK_9 0x39
+#endif
+
+#ifndef VK_F1
+#define VK_F1 0x70
+#endif
+
+#ifndef VK_F24
+#define VK_F24 0x87
+#endif
+
+#ifndef VK_SHIFT
+#define VK_SHIFT 0x10
+#endif
+
+#ifndef VK_CONTROL
+#define VK_CONTROL 0x11
+#endif
+
+#ifndef VK_MENU
+#define VK_MENU 0x12
+#endif
+
+#ifndef VK_LWIN
+#define VK_LWIN 0x5B
+#endif
+
+#ifndef VK_RWIN
+#define VK_RWIN 0x5C
+#endif
+
+#ifndef VK_SPACE
+#define VK_SPACE 0x20
+#endif
+
+#ifndef VK_RETURN
+#define VK_RETURN 0x0D
+#endif
+
+#ifndef VK_TAB
+#define VK_TAB 0x09
+#endif
+
+#ifndef VK_ESCAPE
+#define VK_ESCAPE 0x1B
+#endif
+
+#ifndef VK_LEFT
+#define VK_LEFT 0x25
+#endif
+
+#ifndef VK_RIGHT
+#define VK_RIGHT 0x27
+#endif
+
+#ifndef VK_UP
+#define VK_UP 0x26
+#endif
+
+#ifndef VK_DOWN
+#define VK_DOWN 0x28
+#endif
+
+#ifndef VK_LBUTTON
+#define VK_LBUTTON 0x01
+#endif
+
+#ifndef VK_RBUTTON
+#define VK_RBUTTON 0x02
+#endif
+
+#ifndef VK_MBUTTON
+#define VK_MBUTTON 0x04
+#endif
+
+#include "protocol.h"
+#include "input_capture.h"
 #include <cstdio>
 #include <cstdlib>
 #include <atomic>
@@ -43,15 +133,7 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam);
 DWORD WINAPI HookThreadProc(LPVOID lpParameter);
 DWORD WINAPI MousePollThreadProc(LPVOID lpParameter);
 
-// Get high-precision timestamp (must match utils.cpp)
-int64_t getHighPrecisionTimestamp() {
-    FILETIME ft;
-    GetSystemTimePreciseAsFileTime(&ft);
-    ULARGE_INTEGER uli;
-    uli.LowPart = ft.dwLowDateTime;
-    uli.HighPart = ft.dwHighDateTime;
-    return static_cast<int64_t>(uli.QuadPart / 10000);
-}
+// getHighPrecisionTimestamp is defined in utils.cpp
 
 // Get current input state (any keys or mouse buttons pressed)
 InputState getCurrentInputState() {
