@@ -63,6 +63,17 @@ const HEARTBEAT_TIMEOUT = 5000;  // 5 seconds timeout
 const RESTART_DELAY = 3000;       // 3 seconds before restart
 const DEFAULT_REMOTE_PORT = 8765;
 
+// Pending request type
+type PendingResolver = (value: any) => void;
+type PendingRejecter = (reason?: any) => void;
+
+interface PendingRequest {
+  resolve: PendingResolver;
+  reject: PendingRejecter;
+  timeout: NodeJS.Timeout;
+  expectedType: string;
+}
+
 export class RecorderService {
   private child: ChildProcess | null = null;
   private socket: net.Socket | null = null;
@@ -79,6 +90,9 @@ export class RecorderService {
 
   // Buffer for socket data
   private socketBuffer: string = '';
+
+  // Pending requests (for request/response pattern)
+  private pendingRequests: Map<string, PendingRequest> = new Map();
 
   // Logging
   private logPath: string;
@@ -129,6 +143,32 @@ export class RecorderService {
     } else if (this.config.mode === 'remote' && this.socket) {
       this.socket.write(json);
     }
+  }
+
+  // Generate unique request ID
+  private generateRequestId(): string {
+    return Math.random().toString(36).substring(2, 11);
+  }
+
+  // Send command and wait for response
+  private async sendCommandWithResponse(expectedType: string, command: object, timeoutMs: number = 5000): Promise<any> {
+    const requestId = this.generateRequestId();
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Request timeout'));
+      }, timeoutMs);
+
+      this.pendingRequests.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        expectedType,
+      });
+
+      this.sendCommand(command);
+    });
   }
 
   async start(config: RecordingConfig): Promise<void> {
@@ -206,85 +246,17 @@ export class RecorderService {
 
   async getSystemInfo(): Promise<SystemInfo> {
     await this.connect();
-
-    return new Promise((resolve, reject) => {
-      this.sendCommand({ action: 'sysinfo' });
-
-      const timeout = setTimeout(() => {
-        reject(new Error('System info request timeout'));
-      }, 5000);
-
-      // One-time handler for response
-      const handler = (data: string) => {
-        try {
-          const msg = JSON.parse(data);
-          if (msg.type === 'sysinfo' && msg.data) {
-            clearTimeout(timeout);
-            this.removeDataListener(handler);
-            resolve(msg.data);
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      };
-
-      this.addDataListener(handler);
-    });
+    return this.sendCommandWithResponse('sysinfo', { action: 'sysinfo' });
   }
 
   async checkInputState(): Promise<InputState> {
     await this.connect();
-
-    return new Promise((resolve, reject) => {
-      this.sendCommand({ action: 'check_input' });
-
-      const timeout = setTimeout(() => {
-        reject(new Error('Input state request timeout'));
-      }, 5000);
-
-      const handler = (data: string) => {
-        try {
-          const msg = JSON.parse(data);
-          if (msg.type === 'input_state') {
-            clearTimeout(timeout);
-            this.removeDataListener(handler);
-            resolve({
-              anyKeyPressed: msg.anyKeyPressed,
-              mouseButtonPressed: msg.mouseButtonPressed,
-              pressedKeyCount: msg.pressedKeyCount,
-            });
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      };
-
-      this.addDataListener(handler);
-    });
-  }
-
-  private addDataListener(handler: (data: string) => void): void {
-    if (this.config.mode === 'local' && this.child?.stdout) {
-      const rl = readline.createInterface({ input: this.child.stdout });
-      rl.on('line', handler);
-    } else if (this.config.mode === 'remote' && this.socket) {
-      this.socket.on('data', (data: Buffer) => {
-        this.socketBuffer += data.toString();
-        // Process complete lines
-        const lines = this.socketBuffer.split('\n');
-        this.socketBuffer = lines.pop() || '';
-        lines.forEach(line => {
-          if (line.trim()) {
-            handler(line);
-          }
-        });
-      });
-    }
-  }
-
-  private removeDataListener(handler: (data: string) => void): void {
-    // For socket mode, we use a different approach - the listener is always active
-    // This is a simplified implementation
+    const result = await this.sendCommandWithResponse('input_state', { action: 'check_input' });
+    return {
+      anyKeyPressed: result.anyKeyPressed,
+      mouseButtonPressed: result.mouseButtonPressed,
+      pressedKeyCount: result.pressedKeyCount,
+    };
   }
 
   // Connect to native core (local process or remote socket)
@@ -392,6 +364,13 @@ export class RecorderService {
   private handleSocketClose(): void {
     const wasRecording = this.state === 'recording' || this.state === 'paused';
 
+    // Clear all pending requests
+    this.pendingRequests.forEach((request) => {
+      clearTimeout(request.timeout);
+      request.reject(new Error('Connection closed'));
+    });
+    this.pendingRequests.clear();
+
     if (wasRecording && !this.isRestarting) {
       this.state = 'reconnecting';
       this.broadcastStatus();
@@ -412,6 +391,13 @@ export class RecorderService {
   private handleProcessExit(code: number | null, signal: string | null): void {
     const wasRecording = this.state === 'recording' || this.state === 'paused';
     this.child = null;
+
+    // Clear all pending requests
+    this.pendingRequests.forEach((request) => {
+      clearTimeout(request.timeout);
+      request.reject(new Error('Process exited'));
+    });
+    this.pendingRequests.clear();
 
     if (wasRecording && !this.isRestarting) {
       this.state = 'reconnecting';
@@ -520,14 +506,25 @@ export class RecorderService {
   private handleMessage(line: string): void {
     try {
       const msg = JSON.parse(line);
+      const msgType = msg.type;
 
-      // Handle heartbeat from native core
-      if (msg.type === 'heartbeat') {
-        this.lastHeartbeat = Date.now();
-        return;
+      // Check if there's a pending request waiting for this type
+      if (this.pendingRequests.size > 0) {
+        for (const [id, request] of this.pendingRequests) {
+          if (request.expectedType === msgType) {
+            clearTimeout(request.timeout);
+            this.pendingRequests.delete(id);
+            request.resolve(msg.data || msg);
+            return;
+          }
+        }
       }
 
-      switch (msg.type) {
+      // Handle other message types (broadcasts)
+      switch (msgType) {
+        case 'heartbeat':
+          this.lastHeartbeat = Date.now();
+          break;
         case 'status':
           this.state = msg.state;
           this.broadcastStatus();
@@ -579,6 +576,13 @@ export class RecorderService {
 
   destroy(): void {
     this.stopHeartbeat();
+
+    // Clear pending requests
+    this.pendingRequests.forEach((request) => {
+      clearTimeout(request.timeout);
+      request.reject(new Error('Service destroyed'));
+    });
+    this.pendingRequests.clear();
 
     if (this.config.mode === 'local' && this.child) {
       this.log('INFO', 'Destroying recorder service');

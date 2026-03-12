@@ -72,8 +72,8 @@ public:
 
     void send(const std::string& json) override {
         if (clientSocket_ != INVALID_SOCKET) {
-            send(clientSocket_, json.c_str(), json.length(), 0);
-            send(clientSocket_, "\n", 1, 0);
+            std::string msg = json + "\n";
+            ::send(clientSocket_, msg.c_str(), static_cast<int>(msg.length()), 0);
         }
     }
 };
@@ -611,11 +611,11 @@ int main(int argc, char* argv[]) {
         app.setSocketMode(socketServer);
     }
 
-    // Send ready status
-    app.sendResponse(createStatusResponse("ready"));
-
     // Main command loop
     if (args.mode == CommMode::STDIO) {
+        // Send ready status (stdio mode only, socket mode sends after client connects)
+        app.sendResponse(createStatusResponse("ready"));
+
         // Original stdio mode
         std::string line;
         while (app.shouldContinue()) {
