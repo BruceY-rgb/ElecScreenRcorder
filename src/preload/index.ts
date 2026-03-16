@@ -3,9 +3,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 export interface RecordingConfig {
   resolution: { width: number; height: number };
   fps: number;
+  bitrate?: number;
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
+  organizeByTimestamp?: boolean;
 }
 
 export interface RecordingStatus {
@@ -30,6 +32,7 @@ export interface FinishResult {
   actionsPath: string;
   movementsPath: string;
   duration: number;
+  recordingFolder: string;
 }
 
 export interface InputState {
@@ -39,6 +42,15 @@ export interface InputState {
 }
 
 const electronAPI = {
+  selectSaveDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:selectDirectory'),
+
+  getDefaultSavePath: (): Promise<string> =>
+    ipcRenderer.invoke('dialog:getDefaultPath'),
+
+  setDefaultSavePath: (savePath: string): Promise<void> =>
+    ipcRenderer.invoke('dialog:setDefaultPath', savePath),
+
   startRecording: (config: RecordingConfig): Promise<void> =>
     ipcRenderer.invoke('recorder:start', config),
 
@@ -56,6 +68,9 @@ const electronAPI = {
 
   checkInputState: (): Promise<InputState> =>
     ipcRenderer.invoke('recorder:checkInput'),
+
+  openVideo: (videoPath: string): Promise<void> =>
+    ipcRenderer.invoke('recorder:openVideo', videoPath),
 
   onRecordingStatus: (callback: (status: RecordingStatus) => void) => {
     ipcRenderer.on('recording-status', (_, data) => callback(data));

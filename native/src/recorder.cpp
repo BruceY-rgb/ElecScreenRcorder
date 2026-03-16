@@ -1,46 +1,27 @@
 /**
- * OBS Recording Implementation
+ * FFmpeg-based Screen Recording Implementation
  *
- * Handles OBS initialization, screen capture, hardware encoding,
- * audio recording, and recording lifecycle.
+ * Uses Windows GDI screen capture + FFmpeg for encoding.
+ * Spawns ffmpeg as a child process.
  */
 
 #include "recorder.h"
 #include "utils.h"
 
-// OBS Studio includes
-#include <obs.hpp>
-#include <util/platform.h>
 #include <windows.h>
-
 #include <iostream>
-#include <memory>
-#include <vector>
+#include <sstream>
+#include <thread>
+#include <chrono>
 
 // Global recorder instance
 Recorder* g_recorder = nullptr;
 
-// OBS signal handler callback
-void on_output_stop(void* param, calldata_t* data) {
-    (void)param;
-    (void)data;
-
-    if (g_recorder) {
-        g_recorder->signal_stop(true);
-    }
-}
-
 Recorder::Recorder()
-    : obs_(nullptr)
-    , output_(nullptr)
-    , videoEncoder_(nullptr)
-    , audioEncoder_(nullptr)
-    , audioEncoder2_(nullptr)
-    , screenSource_(nullptr)
-    , systemAudioSource_(nullptr)
-    , microphoneSource_(nullptr)
-    , scene_(nullptr)
+    : state_(RecordingState::IDLE)
+    , encoderType_(EncoderType::NONE)
 {
+    memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
 }
 
 Recorder::~Recorder() {
@@ -48,45 +29,247 @@ Recorder::~Recorder() {
 }
 
 bool Recorder::initialize(const std::wstring& modulePath) {
-    // Initialize OBS - temporarily disabled
-    std::cout << "[RECORDER] OBS initialization disabled\n";
+    // Set FFmpeg path from module path
+    std::wstring ffmpegW = modulePath;
+    if (ffmpegW.empty()) {
+        // Try default path
+        ffmpegW = L".\\dist";
+    }
+
+    // Find ffmpeg.exe
+    std::wstring ffmpegExe = ffmpegW + L"\\ffmpeg.exe";
+    if (GetFileAttributesW(ffmpegExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        // Try parent directory
+        size_t pos = ffmpegW.find(L"\\dist");
+        if (pos != std::wstring::npos) {
+            ffmpegW = ffmpegW.substr(0, pos);
+        }
+        ffmpegExe = ffmpegW + L"\\ffmpeg.exe";
+    }
+
+    if (GetFileAttributesW(ffmpegExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::cerr << "[RECORDER] FFmpeg not found at: " << std::string(ffmpegExe.begin(), ffmpegExe.end()) << std::endl;
+        return false;
+    }
+
+    ffmpegPath_ = std::string(ffmpegExe.begin(), ffmpegExe.end());
+    std::cout << "[RECORDER] FFmpeg path: " << ffmpegPath_ << std::endl;
+
+    // Check for hardware encoders
+    encoderType_ = checkHardwareEncoders();
+
+    std::cout << "[RECORDER] Initialized with encoder: ";
+    switch (encoderType_) {
+        case EncoderType::NVENC: std::cout << "NVIDIA NVENC"; break;
+        case EncoderType::AMF: std::cout << "AMD AMF"; break;
+        case EncoderType::QSV: std::cout << "Intel QSV"; break;
+        case EncoderType::X264: std::cout << "x264 (software)"; break;
+        default: std::cout << "none";
+    }
+    std::cout << std::endl;
+
     return true;
 }
 
-bool Recorder::initVideo() {
-    // Initialize video - temporarily disabled
-    std::cout << "[RECORDER] Video initialization disabled\n";
-    return true;
-}
-
-bool Recorder::initAudio() {
-    // Initialize audio - temporarily disabled
-    std::cout << "[RECORDER] Audio initialization disabled\n";
-    return true;
-}
-
-bool Recorder::createSources() {
-    // Create sources - temporarily disabled
-    std::cout << "[RECORDER] Source creation disabled\n";
-    return true;
-}
-
-EncoderType Recorder::getAvailableEncoder() const {
-    // Get available encoder - temporarily disabled
-    std::cout << "[RECORDER] Encoder detection disabled\n";
+EncoderType Recorder::checkHardwareEncoders() {
+    // Skip hardware encoder detection for now - just use software x264
+    // This prevents potential hangs when spawning ffmpeg
     return EncoderType::X264;
 }
 
-bool Recorder::createEncoders() {
-    // Create encoders - temporarily disabled
-    std::cout << "[RECORDER] Encoder creation disabled\n";
+std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
+    std::ostringstream cmd;
+
+    cmd << "\"" << ffmpegPath_ << "\"";
+
+    // Debug: log config values received
+    std::cerr << "[RECORDER] buildFFmpegCommand: width=" << config.width
+              << " height=" << config.height
+              << " fps=" << config.fps
+              << " videoBitrate=" << config.videoBitrate
+              << " captureAudio=" << config.captureAudio
+              << " audioBitrate=" << config.audioBitrate << std::endl;
+
+    // Global options
+    cmd << " -y";  // Overwrite output
+
+    // Input - Windows screen capture using GDI
+    cmd << " -f gdigrab";
+    cmd << " -framerate " << config.fps;
+    cmd << " -offset_x 0 -offset_y 0";
+    cmd << " -draw_mouse 1";
+    cmd << " -video_size " << config.width << "x" << config.height;
+    cmd << " -i desktop";
+
+    // Video encoder
+    cmd << " -c:v ";
+    switch (encoderType_) {
+        case EncoderType::NVENC:
+            cmd << "h264_nvenc";
+            cmd << " -preset p7";
+            cmd << " -tune hq";
+            break;
+        case EncoderType::AMF:
+            cmd << "h264_amf";
+            cmd << " -quality speed";
+            break;
+        case EncoderType::QSV:
+            cmd << "h264_qsv";
+            break;
+        default:
+            cmd << "libx264";
+            cmd << " -preset ultrafast";
+            cmd << " -tune zerolatency";
+    }
+
+    cmd << " -b:v " << config.videoBitrate << "k";
+    cmd << " -maxrate " << (config.videoBitrate * 1.5) << "k";
+    cmd << " -bufsize " << (config.videoBitrate * 2) << "k";
+
+    // System audio capture using WASAPI (Windows 10/11)
+    if (config.captureAudio) {
+        // Use default audio device (system speakers)
+        cmd << " -f wasapi -i audio=default";
+        // Audio encoder
+        cmd << " -c:a aac";
+        cmd << " -b:a " << config.audioBitrate << "k";
+    }
+
+    // Output
+    cmd << " -f matroska \"" << config.savePath << "\"";
+
+    return cmd.str();
+}
+
+bool Recorder::startFFmpeg(const std::string& command) {
+    std::cerr << "[RECORDER] startFFmpeg: BEGIN" << std::endl;
+
+    STARTUPINFOA si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    // Don't redirect stderr - let it go to console for debugging
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    char* cmdLine = _strdup(command.c_str());
+    std::cerr << "[RECORDER] startFFmpeg: CreateProcess with command: " << command << std::endl;
+
+    if (!CreateProcessA(nullptr, cmdLine, nullptr, nullptr, TRUE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        DWORD err = GetLastError();
+        std::cerr << "[RECORDER] startFFmpeg: CreateProcess failed: " << err << std::endl;
+        free(cmdLine);
+        return false;
+    }
+
+    free(cmdLine);
+    ffmpegProcess_ = pi;
+
+    std::cerr << "[RECORDER] startFFmpeg: FFmpeg process created (PID: " << pi.dwProcessId << ")" << std::endl;
+
+    // Give FFmpeg a moment to start and output any errors
+    Sleep(2000);
+
+    // Check if still running
+    DWORD exitCode;
+    if (GetExitCodeProcess(pi.hProcess, &exitCode)) {
+        std::cerr << "[RECORDER] startFFmpeg: FFmpeg exitCode=" << exitCode << std::endl;
+    }
+
     return true;
 }
 
-bool Recorder::createOutput() {
-    // Create output - temporarily disabled
-    std::cout << "[RECORDER] Output creation disabled\n";
+void Recorder::sendToFFmpeg(const char* cmd, size_t len) {
+    // This would be used for interactive FFmpeg control via pipe
+    // For now we just use simple process management
+    (void)cmd;
+    (void)len;
+}
+
+bool Recorder::startRecording(const RecordingConfig& config) {
+    std::cout << "[RECORDER] startRecording: BEGIN" << std::endl;
+    std::cout << "[RECORDER] startRecording: current state=" << (int)state_ << std::endl;
+
+    if (state_ != RecordingState::IDLE) {
+        std::cerr << "[RECORDER] startRecording: not IDLE, returning false" << std::endl;
+        return false;
+    }
+
+    std::cerr << "[RECORDER] startRecording: ffmpegPath_='" << ffmpegPath_ << "'" << std::endl;
+
+    if (ffmpegPath_.empty()) {
+        std::cerr << "[RECORDER] startRecording: FFmpeg not initialized" << std::endl;
+        return false;
+    }
+
+    config_ = config;
+    outputPath_ = config.savePath;
+
+    std::cerr << "[RECORDER] startRecording: outputPath=" << outputPath_ << std::endl;
+    std::cerr << "[RECORDER] startRecording: width=" << config.width << " height=" << config.height << " fps=" << config.fps << std::endl;
+
+    // Build and start FFmpeg command
+    std::string command = buildFFmpegCommand(config);
+    std::cerr << "[RECORDER] startRecording: FFmpeg command: " << command << std::endl;
+
+    bool started = startFFmpeg(command);
+    std::cerr << "[RECORDER] startRecording: startFFmpeg returned " << started << std::endl;
+
+    if (!started) {
+        std::cerr << "[RECORDER] startRecording: startFFmpeg failed" << std::endl;
+        return false;
+    }
+
+    // Give FFmpeg time to start capturing
+    Sleep(500);
+
+    state_ = RecordingState::RECORDING;
+    totalPausedDuration_ = 0;
+
+    std::cerr << "[RECORDER] startRecording: Recording started successfully" << std::endl;
     return true;
+}
+
+void Recorder::stopRecording() {
+    if (state_ == RecordingState::IDLE) return;
+
+    // Send quit command to FFmpeg
+    if (ffmpegProcess_.hProcess) {
+        // Give FFmpeg a moment to finish writing
+        Sleep(500);
+
+        // Terminate the process if still running
+        TerminateProcess(ffmpegProcess_.hProcess, 0);
+
+        CloseHandle(ffmpegProcess_.hProcess);
+        CloseHandle(ffmpegProcess_.hThread);
+        memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+    }
+
+    state_ = RecordingState::IDLE;
+    std::cout << "[RECORDER] Recording stopped" << std::endl;
+
+    if (stopCallback_) {
+        stopCallback_(stopCallbackData_);
+    }
+}
+
+void Recorder::pauseRecording() {
+    if (state_ != RecordingState::RECORDING) return;
+    pauseBeginTime_ = getHighPrecisionTimestamp();
+    state_ = RecordingState::PAUSED;
+    std::cout << "[RECORDER] Recording paused" << std::endl;
+}
+
+void Recorder::resumeRecording() {
+    if (state_ != RecordingState::PAUSED) return;
+    totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
+    state_ = RecordingState::RECORDING;
+    std::cout << "[RECORDER] Recording resumed" << std::endl;
 }
 
 void Recorder::shutdown() {
@@ -94,118 +277,19 @@ void Recorder::shutdown() {
         stopRecording();
     }
 
-    cleanup();
-
-    // OBS shutdown - temporarily disabled
-    // if (obs_startup()) {
-    //     obs_shutdown();
-    // }
-}
-
-void Recorder::cleanup() {
-    // OBS cleanup - temporarily disabled
-    std::cout << "[RECORDER] Cleanup disabled\n";
-}
-
-bool Recorder::startRecording(const RecordingConfig& config) {
-    if (state_ != RecordingState::IDLE) {
-        std::cerr << "[RECORDER] Already recording or paused\n";
-        return false;
+    if (ffmpegProcess_.hProcess) {
+        CloseHandle(ffmpegProcess_.hProcess);
+        CloseHandle(ffmpegProcess_.hThread);
     }
 
-    config_ = config;
-    outputPath_ = config.savePath;
-
-    // Create sources
-    if (!createSources()) {
-        cleanup();
-        return false;
-    }
-
-    // Create encoders
-    if (!createEncoders()) {
-        cleanup();
-        return false;
-    }
-
-    // Create output - temporarily disabled
-    // if (!createOutput()) {
-    //     cleanup();
-    //     return false;
-    // }
-
-    // Start recording - temporarily disabled
-    // if (!obs_output_start(output_)) {
-    //     std::cerr << "[RECORDER] Failed to start output: " << obs_output_get_last_error(output_) << "\n";
-    //     cleanup();
-    //     return false;
-    // }
-
-    state_ = RecordingState::RECORDING;
-    totalPausedDuration_ = 0;
-
-    std::cout << "[RECORDER] Recording started: " << outputPath_ << "\n";
-    return true;
+    std::cout << "[RECORDER] Shutdown complete" << std::endl;
 }
 
-void Recorder::stopRecording() {
-    if (state_ == RecordingState::IDLE) {
-        return;
-    }
-
-    // Stop output - temporarily disabled
-    std::cout << "[RECORDER] Output stop disabled\n";
-
-    // Cleanup OBS objects
-    cleanup();
-
-    state_ = RecordingState::IDLE;
-
-    std::cout << "[RECORDER] Recording stopped\n";
-
-    // Call stop callback
-    if (stopCallback_) {
-        stopCallback_(stopCallbackData_);
-    }
-}
-
-void Recorder::pauseRecording() {
-    if (state_ != RecordingState::RECORDING) {
-        return;
-    }
-
-    // Pause recording - temporarily disabled
-    pauseBeginTime_ = getHighPrecisionTimestamp();
-    state_ = RecordingState::PAUSED;
-    std::cout << "[RECORDER] Recording paused\n";
-}
-
-void Recorder::resumeRecording() {
-    if (state_ != RecordingState::PAUSED) {
-        return;
-    }
-
-    // OBS resume - temporarily disabled
-    totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
-    state_ = RecordingState::RECORDING;
-    std::cout << "[RECORDER] Recording resumed\n";
-}
-
-bool Recorder::isRecording() const {
-    return state_ == RecordingState::RECORDING;
-}
-
-bool Recorder::isPaused() const {
-    return state_ == RecordingState::PAUSED;
-}
-
-RecordingState Recorder::getState() const {
-    return state_;
-}
-
-std::string Recorder::getOutputPath() const {
-    return outputPath_;
-}
+bool Recorder::isRecording() const { return state_ == RecordingState::RECORDING; }
+bool Recorder::isPaused() const { return state_ == RecordingState::PAUSED; }
+RecordingState Recorder::getState() const { return state_; }
+EncoderType Recorder::getAvailableEncoder() const { return encoderType_; }
+std::string Recorder::getOutputPath() const { return outputPath_; }
 
 void Recorder::setStopCallback(StopCallback callback, void* userData) {
     stopCallback_ = callback;
@@ -214,22 +298,21 @@ void Recorder::setStopCallback(StopCallback callback, void* userData) {
 
 void Recorder::signal_stop(bool success) {
     (void)success;
-    // Output has stopped, cleanup will be done in stopRecording
+    // This would be called when FFmpeg terminates
 }
 
-// Global recorder functions
-bool initRecorder(const std::wstring& modulePath) {
-    if (g_recorder) {
-        return true;
-    }
+bool Recorder::isFFmpegAvailable() const {
+    return !ffmpegPath_.empty();
+}
 
+// Global functions
+bool initRecorder(const std::wstring& modulePath) {
+    if (g_recorder) return true;
     g_recorder = new Recorder();
     return g_recorder->initialize(modulePath);
 }
 
-Recorder* getRecorder() {
-    return g_recorder;
-}
+Recorder* getRecorder() { return g_recorder; }
 
 void shutdownRecorder() {
     if (g_recorder) {

@@ -7,6 +7,8 @@ export interface RecordingConfig {
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
+  captureAudio?: boolean;
+  organizeByTimestamp?: boolean;
 }
 
 export interface RecordingStatus {
@@ -31,12 +33,15 @@ export interface FinishResult {
   actionsPath: string;
   movementsPath: string;
   duration: number;
+  recordingFolder: string;
 }
 
 export interface InputState {
   anyKeyPressed: boolean;
   mouseButtonPressed: boolean;
   pressedKeyCount: number;
+  pressedVKs?: number[];
+  pressedMouseBtns?: number[];
 }
 
 export function useRecorder() {

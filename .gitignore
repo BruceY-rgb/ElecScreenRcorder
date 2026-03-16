@@ -57,3 +57,10 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# OBS Studio dependencies (local copies, not in submodule)
+obs-download/
+native/scripts/obs-download/
+
+# Build cache
+tsconfig.node.tsbuildinfo

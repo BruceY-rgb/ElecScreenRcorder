@@ -30,22 +30,28 @@ export function createMainWindow(): BrowserWindow {
 }
 
 export function createOverlayWindow(): BrowserWindow {
+  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
+
+  const overlayWidth = 280;
+  const overlayHeight = 80;
+
   const overlayWindow = new BrowserWindow({
-    width: 200,
-    height: 60,
-    x: 20,
+    width: overlayWidth,
+    height: overlayHeight,
+    x: screenWidth - overlayWidth - 20,
     y: 20,
     frame: false,
-    transparent: true,
+    transparent: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
-    focusable: false,
+    show: false,
+    backgroundColor: '#12121f',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   });
 
@@ -54,6 +60,7 @@ export function createOverlayWindow(): BrowserWindow {
   // Load the overlay
   if (process.env.VITE_DEV_SERVER_URL) {
     overlayWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/overlay.html');
+    overlayWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
   }

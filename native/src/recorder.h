@@ -1,23 +1,16 @@
+/**
+ * FFmpeg-based Screen Recording Implementation
+ *
+ * Uses Windows native screen capture + FFmpeg for encoding.
+ * Spawns ffmpeg as a child process and communicates via pipe.
+ */
+
 #pragma once
 
 #include <string>
 #include <memory>
 #include <cstdint>
-
-/**
- * OBS Recording Manager
- *
- * Handles OBS initialization, screen capture, hardware encoding,
- * audio recording, and recording lifecycle (start/stop/pause/resume).
- */
-
-// Forward declarations
-struct obs_video_info;
-struct obs_audio_info;
-struct obs_output;
-struct obs_encoder;
-struct obs_source;
-struct obs_scene;
+#include <windows.h>
 
 /**
  * Recording configuration
@@ -26,22 +19,24 @@ struct RecordingConfig {
     int width = 1920;
     int height = 1080;
     int fps = 60;
-    int videoBitrate = 15000;  // kbps (configurable)
-    int audioBitrate = 192;    // kbps per track
+    int videoBitrate = 15000;  // kbps
+    int audioBitrate = 192;    // kbps
     std::string savePath;
     bool separateAudio = false;
     bool remuxToMp4 = false;
+    bool captureAudio = true;   // Enable system audio by default
+    std::string audioDevice;    // Audio device name (empty = default)
 };
 
 /**
- * Encoder type for hardware encoding
+ * Encoder type
  */
 enum class EncoderType {
     NVENC,   // NVIDIA NVENC
     AMF,     // AMD AMF
     QSV,     // Intel Quick Sync Video
     X264,    // Software fallback
-    NONE     // Not available
+    NONE
 };
 
 /**
@@ -59,14 +54,14 @@ public:
     ~Recorder();
 
     /**
-     * Initialize OBS (must be called once at startup)
-     * @param modulePath Path to OBS plugins directory
+     * Initialize recorder
+     * @param modulePath Path to FFmpeg directory
      * @return true if initialized successfully
      */
     bool initialize(const std::wstring& modulePath);
 
     /**
-     * Shutdown OBS (must be called before exit)
+     * Shutdown recorder
      */
     void shutdown();
 
@@ -119,30 +114,30 @@ public:
 
     /**
      * Set callback for recording stop
-     * @param callback Function to call when recording stops
      */
     using StopCallback = void(*)(void*);
     void setStopCallback(StopCallback callback, void* userData);
-    
-    // Public methods for callbacks
+
+    /**
+     * Signal stop from callback
+     */
     void signal_stop(bool success);
 
+    /**
+     * Check if FFmpeg is available
+     */
+    bool isFFmpegAvailable() const;
+
 private:
-    // OBS objects
-    void* obs_;  // obs_context (opaque)
-    obs_output* output_ = nullptr;
-    obs_encoder* videoEncoder_ = nullptr;
-    obs_encoder* audioEncoder_ = nullptr;
-    obs_encoder* audioEncoder2_ = nullptr;  // For separate audio
-    obs_source* screenSource_ = nullptr;
-    obs_source* systemAudioSource_ = nullptr;
-    obs_source* microphoneSource_ = nullptr;
-    obs_scene* scene_ = nullptr;
+    // FFmpeg process
+    PROCESS_INFORMATION ffmpegProcess_ = {};
+    HANDLE ffmpegStdin_ = nullptr;
+    std::string ffmpegPath_;
 
     // State
     RecordingState state_ = RecordingState::IDLE;
     RecordingConfig config_;
-    EncoderType encoderType_ = EncoderType::NONE;
+    EncoderType encoderType_ = EncoderType::X264;
     std::string outputPath_;
 
     // Callbacks
@@ -153,32 +148,22 @@ private:
     int64_t totalPausedDuration_ = 0;
     int64_t pauseBeginTime_ = 0;
 
-    // Private methods
-    bool initVideo();
-    bool initAudio();
-    bool createSources();
-    bool createEncoders();
-    bool createOutput();
-    void cleanup();
+    // Check for hardware encoders
+    EncoderType checkHardwareEncoders();
+
+    // Build FFmpeg command line
+    std::string buildFFmpegCommand(const RecordingConfig& config);
+
+    // Start FFmpeg process
+    bool startFFmpeg(const std::string& command);
+
+    // Send commands to FFmpeg
+    void sendToFFmpeg(const char* cmd, size_t len);
 };
 
-/**
- * Global recorder instance
- */
+// Global functions
 extern Recorder* g_recorder;
 
-/**
- * Initialize recorder
- */
 bool initRecorder(const std::wstring& modulePath);
-
-/**
- * Get recorder instance
- */
 Recorder* getRecorder();
-
-/**
- * Shutdown recorder
- */
 void shutdownRecorder();
-

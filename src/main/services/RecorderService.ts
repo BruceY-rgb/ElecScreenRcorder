@@ -12,6 +12,8 @@ export interface RecordingConfig {
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
+  // 新增：是否将文件整理到时间戳文件夹
+  organizeByTimestamp?: boolean;
 }
 
 export interface RecordingStatus {
@@ -36,12 +38,15 @@ export interface FinishResult {
   actionsPath: string;
   movementsPath: string;
   duration: number;
+  recordingFolder: string;
 }
 
 export interface InputState {
   anyKeyPressed: boolean;
   mouseButtonPressed: boolean;
   pressedKeyCount: number;
+  pressedVKs?: number[];
+  pressedMouseBtns?: number[];
 }
 
 // Communication mode
@@ -88,6 +93,10 @@ export class RecorderService {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private isRestarting: boolean = false;
 
+  // Status broadcast timer (for duration updates)
+  private statusBroadcastTimer: NodeJS.Timeout | null = null;
+  private pausedAt: number = 0;
+
   // Buffer for socket data
   private socketBuffer: string = '';
 
@@ -95,8 +104,14 @@ export class RecorderService {
   private pendingRequests: Map<string, PendingRequest> = new Map();
 
   // Logging
-  private logPath: string;
+  private logPath: string = '';
   private logStream: fs.WriteStream | null = null;
+
+  // 录制输出文件夹（时间戳文件夹）
+  private recordingFolder: string = '';
+
+  // Remux to MP4 after recording
+  private shouldRemuxToMp4: boolean = false;
 
   constructor(config: RecorderConfig) {
     this.config = config;
@@ -157,14 +172,32 @@ export class RecorderService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(requestId);
+        // Also remove the error listener
+        this.pendingRequests.delete(requestId + '_err');
         reject(new Error('Request timeout'));
       }, timeoutMs);
 
+      // Listen for expected response type
       this.pendingRequests.set(requestId, {
-        resolve,
+        resolve: (value: any) => {
+          this.pendingRequests.delete(requestId + '_err');
+          resolve(value);
+        },
         reject,
         timeout,
         expectedType,
+      });
+
+      // Also listen for error response (native core returns {"type":"error"} on failure)
+      this.pendingRequests.set(requestId + '_err', {
+        resolve: (value: any) => {
+          clearTimeout(timeout);
+          this.pendingRequests.delete(requestId);
+          reject(new Error(value.msg || value.message || 'Native core error'));
+        },
+        reject,
+        timeout: null as any, // managed by the primary request's timeout
+        expectedType: 'error',
       });
 
       this.sendCommand(command);
@@ -176,6 +209,53 @@ export class RecorderService {
       throw new Error(`Cannot start recording: already ${this.state}`);
     }
 
+    // Generate default save path if not provided
+    let savePath = config.savePath;
+    const organizeByTimestamp = config.organizeByTimestamp !== false; // 默认启用
+
+    this.log('INFO', `[DEBUG] start() called. config.savePath="${config.savePath}" organizeByTimestamp=${organizeByTimestamp}`);
+
+    if (!savePath) {
+      const videosDir = app.getPath('videos');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+      if (organizeByTimestamp) {
+        // 创建以时间戳命名的文件夹
+        this.recordingFolder = path.join(videosDir, timestamp);
+        if (!fs.existsSync(this.recordingFolder)) {
+          fs.mkdirSync(this.recordingFolder, { recursive: true });
+        }
+        savePath = path.join(this.recordingFolder, `recording.mkv`);
+      } else {
+        // 保持原有的扁平结构
+        this.recordingFolder = '';
+        savePath = path.join(videosDir, `recording_${timestamp}.mkv`);
+      }
+    } else {
+      // savePath is a directory chosen by user — need to append filename
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+      if (organizeByTimestamp) {
+        // 在用户选择的目录下创建时间戳子文件夹
+        this.recordingFolder = path.join(savePath, timestamp);
+        if (!fs.existsSync(this.recordingFolder)) {
+          fs.mkdirSync(this.recordingFolder, { recursive: true });
+        }
+        savePath = path.join(this.recordingFolder, `recording.mkv`);
+      } else {
+        this.recordingFolder = '';
+        savePath = path.join(savePath, `recording_${timestamp}.mkv`);
+      }
+    }
+
+    this.log('INFO', `[DEBUG] Final savePath="${savePath}" recordingFolder="${this.recordingFolder}"`);
+
+    // Ensure save directory exists
+    const saveDir = path.dirname(savePath);
+    if (!fs.existsSync(saveDir)) {
+      fs.mkdirSync(saveDir, { recursive: true });
+    }
+
     await this.connect();
 
     const command = {
@@ -185,21 +265,30 @@ export class RecorderService {
         height: config.resolution.height,
         fps: config.fps,
         bitrate: config.bitrate || 15000,
-        savePath: config.savePath,
+        savePath,
         separateAudio: config.separateAudio,
         remuxToMp4: config.remuxToMp4,
       },
     };
 
-    this.sendCommand(command);
+    // Send start command and wait for native core response
+    const response = await this.sendCommandWithResponse('status', command, 10000);
+
+    // Native core responds with {"state":"recording","type":"status"} on success
+    if (response.state !== 'recording') {
+      throw new Error(`Failed to start recording: native core returned state '${response.state}'`);
+    }
+
     this.state = 'recording';
     this.recordingStartTime = Date.now();
     this.duration = 0;
     this.frameCount = 0;
+    this.shouldRemuxToMp4 = config.remuxToMp4;
 
     this.log('INFO', `Recording started: ${config.resolution.width}x${config.resolution.height} @ ${config.fps}fps`);
     this.broadcastStatus();
     this.startHeartbeat();
+    this.startStatusBroadcast();
   }
 
   async stop(): Promise<FinishResult> {
@@ -207,18 +296,27 @@ export class RecorderService {
       throw new Error('Cannot stop: not recording');
     }
 
-    this.sendCommand({ action: 'stop' });
+    const response = await this.sendCommandWithResponse('finish', { action: 'stop' }, 10000);
 
     this.state = 'idle';
     this.stopHeartbeat();
+    this.stopStatusBroadcast();
     this.log('INFO', 'Recording stopped');
     this.broadcastStatus();
 
+    let videoPath: string = response.videoPath || '';
+
+    // Remux MKV to MP4 if requested
+    if (this.shouldRemuxToMp4 && videoPath && /\.mkv$/i.test(videoPath)) {
+      videoPath = await this.remuxMkvToMp4(videoPath);
+    }
+
     return {
-      videoPath: '',
-      actionsPath: '',
-      movementsPath: '',
-      duration: this.duration,
+      videoPath,
+      actionsPath: response.actionsPath || '',
+      movementsPath: response.movementsPath || '',
+      duration: response.duration || this.duration,
+      recordingFolder: this.recordingFolder,
     };
   }
 
@@ -227,8 +325,11 @@ export class RecorderService {
       throw new Error(`Cannot pause: state is ${this.state}`);
     }
 
-    this.sendCommand({ action: 'pause' });
+    await this.sendCommandWithResponse('status', { action: 'pause' }, 5000);
     this.state = 'paused';
+    this.duration = Date.now() - this.recordingStartTime;
+    this.pausedAt = Date.now();
+    this.stopStatusBroadcast();
     this.log('INFO', 'Recording paused');
     this.broadcastStatus();
   }
@@ -238,8 +339,11 @@ export class RecorderService {
       throw new Error(`Cannot resume: state is ${this.state}`);
     }
 
-    this.sendCommand({ action: 'resume' });
+    await this.sendCommandWithResponse('status', { action: 'resume' }, 5000);
     this.state = 'recording';
+    // Adjust start time to exclude paused duration
+    this.recordingStartTime += Date.now() - this.pausedAt;
+    this.startStatusBroadcast();
     this.log('INFO', 'Recording resumed');
     this.broadcastStatus();
   }
@@ -252,10 +356,13 @@ export class RecorderService {
   async checkInputState(): Promise<InputState> {
     await this.connect();
     const result = await this.sendCommandWithResponse('input_state', { action: 'check_input' });
+    console.log('[DEBUG RecorderService] raw input_state from native:', JSON.stringify(result));
     return {
       anyKeyPressed: result.anyKeyPressed,
       mouseButtonPressed: result.mouseButtonPressed,
       pressedKeyCount: result.pressedKeyCount,
+      pressedVKs: result.pressedVKs || [],
+      pressedMouseBtns: result.pressedMouseBtns || [],
     };
   }
 
@@ -305,7 +412,8 @@ export class RecorderService {
     this.child.stderr?.on('data', (data) => {
       const message = data.toString().trim();
       if (message) {
-        this.log('ERROR', `[Native Core] ${message}`);
+        const level = this.classifyStderrMessage(message);
+        this.log(level, `[Native Core] ${message}`);
       }
     });
 
@@ -385,6 +493,7 @@ export class RecorderService {
 
     this.socket = null;
     this.stopHeartbeat();
+    this.stopStatusBroadcast();
     this.broadcastStatus();
   }
 
@@ -416,20 +525,90 @@ export class RecorderService {
     }
 
     this.stopHeartbeat();
+    this.stopStatusBroadcast();
     this.broadcastStatus();
   }
 
   private handleProcessError(err: Error): void {
     this.log('ERROR', `Process error: ${err.message}`);
 
+    // Always clear the child reference on error so connect() can retry
+    this.child = null;
+
+    // Clear all pending requests
+    this.pendingRequests.forEach((request) => {
+      clearTimeout(request.timeout);
+      request.reject(new Error(`Process error: ${err.message}`));
+    });
+    this.pendingRequests.clear();
+
     if (this.state === 'recording' || this.state === 'paused') {
       this.state = 'reconnecting';
+      this.stopStatusBroadcast();
       this.broadcastStatus();
 
       setTimeout(() => {
         this.attemptRestart();
       }, RESTART_DELAY);
+    } else {
+      this.state = 'idle';
+      this.broadcastStatus();
     }
+  }
+
+  private remuxMkvToMp4(mkvPath: string): Promise<string> {
+    const mp4Path = mkvPath.replace(/\.mkv$/i, '.mp4');
+    const ffmpegPath = path.join(path.dirname(this.config.nativeCorePath!), 'ffmpeg.exe');
+
+    this.log('INFO', `Remuxing MKV to MP4: ${mkvPath} -> ${mp4Path}`);
+
+    return new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, [
+        '-y', '-i', mkvPath, '-c', 'copy', mp4Path,
+      ], { windowsHide: true });
+
+      let stderr = '';
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('error', (err) => {
+        this.log('WARN', `Remux failed to start: ${err.message}`);
+        resolve(mkvPath);
+      });
+
+      proc.on('exit', (code) => {
+        if (code === 0 && fs.existsSync(mp4Path)) {
+          this.log('INFO', `Remux completed: ${mp4Path}`);
+          resolve(mp4Path);
+        } else {
+          this.log('WARN', `Remux failed (exit code ${code}): ${stderr.slice(-500)}`);
+          resolve(mkvPath);
+        }
+      });
+    });
+  }
+
+  private classifyStderrMessage(message: string): string {
+    // Native core recorder messages
+    if (message.includes('[RECORDER]')) {
+      if (/error|Error|FAILED|failed/.test(message)) {
+        return 'ERROR';
+      }
+      return 'INFO';
+    }
+    // FFmpeg progress output (frame= ... fps= ... )
+    if (/^frame=/.test(message)) return 'DEBUG';
+    // FFmpeg informational output
+    if (/^(ffmpeg version|built with|configuration:|lib(av|sw)|Input #|Output #|Stream |Duration:|Press \[q\]|Stream mapping)/.test(message)) return 'DEBUG';
+    // FFmpeg codec/filter messages (e.g. [libx264 @ ...], [gdigrab @ ...])
+    if (/^\[[\w]+ @/.test(message)) return 'DEBUG';
+    // Metadata lines
+    if (/^\s*(Metadata:|encoder\s|Side data:|cpb:)/.test(message)) return 'DEBUG';
+    // FFmpeg profile/options lines
+    if (/^\s*\d+ fps,/.test(message)) return 'DEBUG';
+    // Default to WARN for unclassified stderr
+    return 'WARN';
   }
 
   private attemptRestart(): void {
@@ -483,6 +662,27 @@ export class RecorderService {
     }
   }
 
+  private startStatusBroadcast(): void {
+    this.stopStatusBroadcast();
+    this.statusBroadcastTimer = setInterval(() => {
+      this.updateDuration();
+      this.broadcastStatus();
+    }, 1000);
+  }
+
+  private stopStatusBroadcast(): void {
+    if (this.statusBroadcastTimer) {
+      clearInterval(this.statusBroadcastTimer);
+      this.statusBroadcastTimer = null;
+    }
+  }
+
+  private updateDuration(): void {
+    if (this.state === 'recording' && this.recordingStartTime > 0) {
+      this.duration = Date.now() - this.recordingStartTime;
+    }
+  }
+
   private checkHeartbeat(): void {
     const now = Date.now();
     const elapsed = now - this.lastHeartbeat;
@@ -498,8 +698,8 @@ export class RecorderService {
 
       this.handleProcessExit(null, 'heartbeat-timeout');
     } else {
-      // Send a simple command to check connection is alive
-      this.sendCommand({ action: 'status' });
+      // Send a lightweight command to check connection is alive
+      this.sendCommand({ action: 'check_input' });
     }
   }
 
@@ -507,6 +707,9 @@ export class RecorderService {
     try {
       const msg = JSON.parse(line);
       const msgType = msg.type;
+
+      // Any message from native core proves it's alive
+      this.lastHeartbeat = Date.now();
 
       // Check if there's a pending request waiting for this type
       if (this.pendingRequests.size > 0) {
@@ -523,12 +726,21 @@ export class RecorderService {
       // Handle other message types (broadcasts)
       switch (msgType) {
         case 'heartbeat':
-          this.lastHeartbeat = Date.now();
+          // Already handled above
           break;
-        case 'status':
-          this.state = msg.state;
+        case 'status': {
+          // Map native core states to valid RecordingState
+          const nativeState = msg.state;
+          if (nativeState === 'ready' || nativeState === 'idle') {
+            this.state = 'idle';
+          } else if (nativeState === 'recording') {
+            this.state = 'recording';
+          } else if (nativeState === 'paused') {
+            this.state = 'paused';
+          }
           this.broadcastStatus();
           break;
+        }
         case 'error':
           this.broadcastError(msg.msg);
           break;
@@ -536,10 +748,10 @@ export class RecorderService {
           this.broadcastFinish(msg);
           break;
         case 'sysinfo':
-          // Sysinfo message is handled by the one-time listener in getSystemInfo
+          // Handled by pending request above
           break;
         case 'input_state':
-          // Input state message is handled by the one-time listener in checkInputState
+          // Handled by pending request above (heartbeat ping responses land here too)
           break;
       }
     } catch {
@@ -548,8 +760,10 @@ export class RecorderService {
   }
 
   private broadcastStatus(): void {
+    // Map 'reconnecting' to 'idle' for the renderer (it doesn't know about reconnecting)
+    const frontendState = this.state === 'reconnecting' ? 'idle' : this.state;
     const status: RecordingStatus = {
-      state: this.state,
+      state: frontendState,
       duration: this.duration,
       frameCount: this.frameCount,
     };
@@ -572,6 +786,7 @@ export class RecorderService {
       actionsPath: data.actionsPath || '',
       movementsPath: data.movementsPath || '',
       duration: data.duration || 0,
+      recordingFolder: this.recordingFolder || '',
     };
 
     this.log('INFO', `Recording finished: ${result.videoPath}`);
@@ -582,6 +797,7 @@ export class RecorderService {
 
   destroy(): void {
     this.stopHeartbeat();
+    this.stopStatusBroadcast();
 
     // Clear pending requests
     this.pendingRequests.forEach((request) => {

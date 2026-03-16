@@ -85,7 +85,7 @@ async function createWindows() {
   // Create main window
   mainWindow = createMainWindow();
 
-  // Create overlay window
+  // Create overlay window (hidden initially, shown when recording starts)
   overlayWindow = createOverlayWindow();
 
   // Load configuration
@@ -94,8 +94,8 @@ async function createWindows() {
   // Initialize recorder service
   recorderService = new RecorderService(config);
 
-  // Register IPC handlers
-  registerHandlers(recorderService);
+  // Register IPC handlers with window getter (always returns current references)
+  registerHandlers(recorderService, () => ({ mainWindow, overlayWindow }));
 
   // Handle window close
   mainWindow.on('closed', () => {

@@ -117,6 +117,9 @@ std::optional<Command> parseCommand(const std::string& input) {
         if (config.contains("remuxToMp4") && config["remuxToMp4"].is_boolean()) {
             cmd.config.remuxToMp4 = config["remuxToMp4"].get<bool>();
         }
+        if (config.contains("captureAudio") && config["captureAudio"].is_boolean()) {
+            cmd.config.captureAudio = config["captureAudio"].get<bool>();
+        }
     }
 
     return cmd;
@@ -173,5 +176,7 @@ std::string createInputStateResponse(const InputState& state) {
     j["anyKeyPressed"] = state.anyKeyPressed;
     j["mouseButtonPressed"] = state.mouseButtonPressed;
     j["pressedKeyCount"] = state.pressedKeyCount;
+    j["pressedVKs"] = state.pressedVKs;
+    j["pressedMouseBtns"] = state.pressedMouseBtns;
     return j.dump();
 }

@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include <cstdint>
+#include <vector>
 
 /**
  * Command types supported by the recorder
@@ -25,6 +26,8 @@ struct InputState {
     bool anyKeyPressed = false;
     bool mouseButtonPressed = false;
     int pressedKeyCount = 0;
+    std::vector<int> pressedVKs;       // debug: which VK codes are down
+    std::vector<int> pressedMouseBtns;  // debug: which mouse buttons are down
 };
 
 /**
@@ -36,8 +39,9 @@ struct StartConfig {
     int fps = 60;                    // Frame rate
     int bitrate = 15000;             // Video bitrate in kbps
     std::string savePath;             // Output file path
-    bool separateAudio = false;       // Separate audio tracks
+    bool separateAudio = false;      // Separate audio tracks
     bool remuxToMp4 = false;         // Convert to MP4 after recording
+    bool captureAudio = true;        // Capture system audio
 };
 
 /**

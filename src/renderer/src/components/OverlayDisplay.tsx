@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { RecordingStatus } from '../hooks/useRecorder';
 
 function formatDuration(ms: number): string {
@@ -23,36 +23,51 @@ function OverlayDisplay() {
     window.electronAPI.onRecordingStatus(setStatus);
   }, []);
 
-  const getStatusText = () => {
-    switch (status.state) {
-      case 'recording':
-        return 'Recording';
-      case 'paused':
-        return 'Paused';
-      default:
-        return 'Ready';
-    }
-  };
+  const handlePause = useCallback(() => {
+    window.electronAPI.pauseRecording().catch(console.error);
+  }, []);
 
-  const getStatusColor = () => {
-    switch (status.state) {
-      case 'recording':
-        return '#ff4444';
-      case 'paused':
-        return '#ffaa00';
-      default:
-        return '#44ff44';
-    }
-  };
+  const handleResume = useCallback(() => {
+    window.electronAPI.resumeRecording().catch(console.error);
+  }, []);
+
+  const handleStop = useCallback(() => {
+    window.electronAPI.stopRecording().catch(console.error);
+  }, []);
+
+  const isRecording = status.state === 'recording';
+  const isPaused = status.state === 'paused';
 
   return (
     <div className="overlay">
-      <div className="status" style={{ color: getStatusColor() }}>
-        {getStatusText()}
+      <div className="overlay-indicator" style={{
+        background: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
+      }} />
+      <div className="overlay-info">
+        <div className="overlay-status" style={{
+          color: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
+        }}>
+          {isRecording ? 'REC' : isPaused ? 'PAUSED' : 'READY'}
+        </div>
+        <div className="overlay-duration">
+          {formatDuration(status.duration)}
+        </div>
       </div>
-      {status.state !== 'idle' && (
-        <div className="duration">{formatDuration(status.duration)}</div>
-      )}
+      <div className="overlay-buttons">
+        {isRecording && (
+          <button className="overlay-btn pause-btn" onClick={handlePause} title="Pause">
+            &#9646;&#9646;
+          </button>
+        )}
+        {isPaused && (
+          <button className="overlay-btn resume-btn" onClick={handleResume} title="Resume">
+            &#9654;
+          </button>
+        )}
+        <button className="overlay-btn stop-btn" onClick={handleStop} title="Stop">
+          &#9632;
+        </button>
+      </div>
     </div>
   );
 }

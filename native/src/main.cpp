@@ -305,6 +305,14 @@ public:
     bool startRecording(const Command& cmd) {
         const auto& config = cmd.config;
 
+        // Debug: log config values
+        std::cerr << "[DEBUG] startRecording config: width=" << config.width
+                  << " height=" << config.height
+                  << " fps=" << config.fps
+                  << " bitrate=" << config.bitrate
+                  << " captureAudio=" << config.captureAudio
+                  << " savePath=" << config.savePath << std::endl;
+
         // Validate config
         if (config.savePath.empty()) {
             return false;
@@ -350,6 +358,7 @@ public:
         obsConfig.savePath = config.savePath;
         obsConfig.separateAudio = config.separateAudio;
         obsConfig.remuxToMp4 = config.remuxToMp4;
+        obsConfig.captureAudio = config.captureAudio;
 
         Recorder* recorder = getRecorder();
         if (!recorder || !recorder->startRecording(obsConfig)) {
@@ -592,6 +601,10 @@ int main(int argc, char* argv[]) {
     // Initialize CSV writer system
     initCsvWriter();
 
+    // Initialize input capture early so hook-based key state tracking
+    // is available for CHECK_INPUT before recording starts
+    initInputCapture();
+
     // Initialize OBS recorder
     // Get the module path from the executable directory
     wchar_t exePath[MAX_PATH];
@@ -669,6 +682,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
+    shutdownInputCapture();
     shutdownRecorder();
     shutdownCsvWriter();
     cleanupHighResTimer();

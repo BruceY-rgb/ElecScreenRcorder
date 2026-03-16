@@ -1,3 +1,29 @@
+/* ── Design Tokens ── */
+:root {
+  --bg-primary: #0d0d12;
+  --bg-secondary: #1a1a2e;
+  --bg-card: #16162a;
+  --bg-input: #0f0f1e;
+  --bg-header: #12121f;
+  --accent-start: #00d4aa;
+  --accent-end: #0088ff;
+  --accent: #00b4d8;
+  --color-danger: #ff4060;
+  --color-warning: #ffaa00;
+  --color-success: #00d4aa;
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888aa;
+  --text-muted: #555570;
+  --border-color: rgba(255, 255, 255, 0.06);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-color);
+  --radius-card: 14px;
+  --radius-input: 8px;
+  --radius-button: 10px;
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
+
+/* ── Reset ── */
 * {
   box-sizing: border-box;
 }
@@ -6,156 +32,487 @@ body {
   margin: 0;
   padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #1a1a1a;
-  color: #ffffff;
+  background: linear-gradient(160deg, var(--bg-primary), var(--bg-secondary));
+  color: var(--text-primary);
+  min-height: 100vh;
 }
 
+/* ── App Shell ── */
 .app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
+/* ── Header ── */
 .header {
-  background: #2a2a2a;
-  padding: 16px 24px;
-  border-bottom: 1px solid #3a3a3a;
+  background: var(--bg-header);
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .header h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
 }
 
+/* ── Main ── */
 .main {
   flex: 1;
-  padding: 24px;
-  max-width: 800px;
+  padding: 0 24px 24px;
+  max-width: 640px;
   margin: 0 auto;
   width: 100%;
 }
 
-.controls {
-  background: #2a2a2a;
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
-}
-
-.config-section {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+/* ── Error Banner ── */
+.error {
+  background: var(--color-danger);
+  color: white;
+  padding: 12px 16px;
+  border-radius: var(--radius-input);
   margin-bottom: 16px;
+  font-size: 14px;
+  animation: fade-in 0.3s ease;
 }
 
-.config-section label {
+/* ── Warning Banner ── */
+.warning-banner {
+  background: rgba(255, 64, 96, 0.15);
+  color: var(--color-danger);
+  border: 1px solid rgba(255, 64, 96, 0.3);
+  padding: 12px 16px;
+  border-radius: var(--radius-input);
+  margin-bottom: 16px;
+  font-size: 13px;
+  animation: fade-in 0.3s ease;
+}
+
+/* ═══════════════════════════════════════
+   Hero Section
+   ═══════════════════════════════════════ */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 0 32px;
+}
+
+/* Big circle button */
+.hero-button {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.config-section select {
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: 1px solid #3a3a3a;
-  background: #1a1a1a;
-  color: #ffffff;
-}
-
-.config-section input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-}
-
-.buttons {
-  display: flex;
-  gap: 12px;
-}
-
-.buttons button {
-  padding: 10px 20px;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.buttons button:first-child {
-  background: #4CAF50;
+  justify-content: center;
+  font-size: 40px;
   color: white;
+  background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+  box-shadow: 0 0 40px rgba(0, 180, 216, 0.25), 0 0 0 0 rgba(0, 180, 216, 0);
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
 }
 
-.buttons button:first-child:hover:not(:disabled) {
-  background: #45a049;
+.hero-button:hover:not(:disabled) {
+  transform: scale(1.06);
+  box-shadow: 0 0 60px rgba(0, 180, 216, 0.4), 0 0 0 4px rgba(0, 180, 216, 0.15);
 }
 
-.buttons button:not(:first-child) {
-  background: #3a3a3a;
-  color: white;
+.hero-button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
-.buttons button:not(:first-child):hover:not(:disabled) {
-  background: #4a4a4a;
-}
-
-.buttons button:disabled {
+.hero-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.status {
-  background: #2a2a2a;
-  border-radius: 8px;
-  padding: 16px;
-  text-align: center;
-  font-size: 16px;
+/* Recording state */
+.hero-button--recording {
+  background: var(--color-danger);
+  box-shadow: 0 0 40px rgba(255, 64, 96, 0.3);
+  animation: record-pulse 2s ease-in-out infinite;
 }
 
-.error {
-  background: #ff4444;
-  color: white;
-  padding: 12px;
-  border-radius: 6px;
-  margin-bottom: 16px;
+.hero-button--recording:hover:not(:disabled) {
+  box-shadow: 0 0 60px rgba(255, 64, 96, 0.45);
 }
 
-.system-status {
-  background: #2a2a2a;
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
+/* Paused state */
+.hero-button--paused {
+  background: var(--color-warning);
+  box-shadow: 0 0 40px rgba(255, 170, 0, 0.25);
+  animation: none;
 }
 
-.system-status h2 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
+.hero-button--paused:hover:not(:disabled) {
+  box-shadow: 0 0 60px rgba(255, 170, 0, 0.4);
+}
+
+/* Hero label */
+.hero-label {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+/* Duration timer */
+.hero-timer {
+  font-size: 36px;
+  font-family: 'Consolas', 'Courier New', monospace;
   font-weight: 600;
+  letter-spacing: 3px;
+  margin-top: 16px;
+  color: var(--text-primary);
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
-}
-
-.info-item {
+/* Contextual action buttons row */
+.hero-actions {
   display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.hero-action-btn {
+  padding: 10px 24px;
+  border-radius: var(--radius-button);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.hero-action-btn:hover {
+  transform: translateY(-1px);
+}
+
+.hero-action-btn--pause {
+  background: rgba(255, 170, 0, 0.12);
+  border-color: rgba(255, 170, 0, 0.3);
+  color: var(--color-warning);
+}
+
+.hero-action-btn--pause:hover {
+  background: rgba(255, 170, 0, 0.2);
+}
+
+.hero-action-btn--stop {
+  background: rgba(255, 64, 96, 0.12);
+  border-color: rgba(255, 64, 96, 0.3);
+  color: var(--color-danger);
+}
+
+.hero-action-btn--stop:hover {
+  background: rgba(255, 64, 96, 0.2);
+}
+
+.hero-action-btn--resume {
+  background: rgba(0, 212, 170, 0.12);
+  border-color: rgba(0, 212, 170, 0.3);
+  color: var(--color-success);
+}
+
+.hero-action-btn--resume:hover {
+  background: rgba(0, 212, 170, 0.2);
+}
+
+/* Last recording card */
+.hero-last-recording {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  width: 100%;
+  max-width: 400px;
+  animation: fade-in 0.4s ease;
+}
+
+.hero-last-recording p {
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.hero-last-recording button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: var(--radius-button);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+  transition: opacity var(--transition-fast);
+}
+
+.hero-last-recording button:hover {
+  opacity: 0.85;
+}
+
+/* ═══════════════════════════════════════
+   Collapsible Settings Panels
+   ═══════════════════════════════════════ */
+.settings-panel {
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.settings-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  padding: 14px 18px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  transition: background var(--transition-fast);
 }
 
-.info-item .label {
-  color: #888;
+.settings-toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.info-item .value {
+.settings-toggle .chevron {
+  font-size: 12px;
+  transition: transform var(--transition-normal);
+  color: var(--text-muted);
+}
+
+.settings-toggle .chevron.open {
+  transform: rotate(180deg);
+}
+
+.settings-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease;
+}
+
+.settings-content.open {
+  max-height: 600px;
+}
+
+.settings-content-inner {
+  padding: 0 18px 18px;
+}
+
+/* ── Setting Rows ── */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setting-select {
+  padding: 6px 12px;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  min-width: 180px;
+  transition: border-color var(--transition-fast);
+  outline: none;
+}
+
+.setting-select:focus {
+  border-color: var(--accent);
+}
+
+/* Checkbox rows */
+.setting-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.setting-checkbox:last-child {
+  border-bottom: none;
+}
+
+.setting-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* Save path */
+.save-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.save-path-row input {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.save-path-row input:focus {
+  border-color: var(--accent);
+}
+
+.save-path-row button {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-input);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 13px;
+  transition: all var(--transition-fast);
+}
+
+.save-path-row button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+/* ── Hotkey Badges ── */
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.hotkey-row:last-child {
+  border-bottom: none;
+}
+
+.hotkey-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.hotkey-badge {
+  width: 100px;
+  padding: 6px 10px;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  text-align: center;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.hotkey-badge:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+.hotkey-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+/* ═══════════════════════════════════════
+   System Footer
+   ═══════════════════════════════════════ */
+.system-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  margin-top: auto;
+  border-top: 1px solid var(--border-color);
+}
+
+.system-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+  font-size: 11px;
+}
+
+.system-badge .badge-label {
+  color: var(--text-muted);
+}
+
+.system-badge .badge-value {
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
-/* Overlay styles */
+/* ═══════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════ */
+@keyframes record-pulse {
+  0%, 100% {
+    box-shadow: 0 0 40px rgba(255, 64, 96, 0.3), 0 0 0 0 rgba(255, 64, 96, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(255, 64, 96, 0.3), 0 0 0 16px rgba(255, 64, 96, 0);
+  }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--accent); }
+  50% { border-color: transparent; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Overlay styles (used by React OverlayDisplay) ── */
 .overlay {
   padding: 10px;
   background: rgba(0, 0, 0, 0.7);
@@ -175,89 +532,4 @@ body {
 
 .overlay .duration {
   font-family: monospace;
-}
-
-/* Warning banner */
-.warning-banner {
-  background: #ff6b35;
-  color: white;
-  padding: 12px 16px;
-  border-radius: 6px;
-  margin-bottom: 16px;
-  font-size: 14px;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.8; }
-}
-
-/* Config section headings */
-.config-section h3 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #aaa;
-  width: 100%;
-  border-bottom: 1px solid #3a3a3a;
-  padding-bottom: 8px;
-}
-
-/* Hotkey configuration */
-.hotkey-config {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-
-.hotkey-config label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.hotkey-config input {
-  width: 120px;
-  padding: 6px 10px;
-  border-radius: 4px;
-  border: 1px solid #3a3a3a;
-  background: #1a1a1a;
-  color: #ffffff;
-  text-align: center;
-  font-family: monospace;
-}
-
-.hotkey-config input:focus {
-  outline: none;
-  border-color: #4CAF50;
-}
-
-.hint {
-  font-size: 12px;
-  color: #666;
-  margin: 0 0 12px 0;
-}
-
-/* Button styles */
-.start-btn {
-  background: #4CAF50 !important;
-}
-
-.start-btn:hover:not(:disabled) {
-  background: #45a049 !important;
-}
-
-.stop-btn {
-  background: #f44336 !important;
-}
-
-.stop-btn:hover:not(:disabled) {
-  background: #da190b !important;
-}
-
-/* Resolution/FPS/Bitrate selects */
-.config-section select {
-  min-width: 180px;
 }

@@ -127,6 +127,12 @@ static std::atomic<int64_t> g_totalPausedDuration{0};
 static std::atomic<int64_t> g_pauseBeginTime{0};
 static std::atomic<bool> g_isPaused{false};
 
+// Hook-based key/mouse state tracking (updated by low-level hooks)
+// These are always updated, regardless of g_capturing state, so that
+// getCurrentInputState() works before recording starts.
+static std::atomic<bool> g_keyStates[256] = {};  // indexed by virtual key code
+static std::atomic<bool> g_mouseButtons[3] = {}; // 0=left, 1=right, 2=middle
+
 // Forward declarations
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -135,86 +141,92 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter);
 
 // getHighPrecisionTimestamp is defined in utils.cpp
 
-// Get current input state (any keys or mouse buttons pressed)
+// Get current input state using hook-tracked key states.
+// GetAsyncKeyState is unreliable from a background process with no foreground
+// window — the hook-based tracking is authoritative since the low-level hooks
+// receive real key-down/key-up events via the hook thread's message pump.
 InputState getCurrentInputState() {
     InputState state;
     state.anyKeyPressed = false;
     state.mouseButtonPressed = false;
     state.pressedKeyCount = 0;
 
-    // Check standard A-Z, 0-9 keys
-    for (int vk = VK_A; vk <= VK_Z; vk++) {
-        if (GetAsyncKeyState(vk) & 0x8000) {
+    // Helper: check a VK and record it if pressed
+    auto checkKey = [&](int vk) {
+        if (g_keyStates[vk].load(std::memory_order_relaxed)) {
             state.anyKeyPressed = true;
             state.pressedKeyCount++;
+            state.pressedVKs.push_back(vk);
         }
-    }
-    for (int vk = VK_0; vk <= VK_9; vk++) {
-        if (GetAsyncKeyState(vk) & 0x8000) {
-            state.anyKeyPressed = true;
-            state.pressedKeyCount++;
-        }
-    }
-    // Check function keys F1-F24
-    for (int vk = VK_F1; vk <= VK_F24; vk++) {
-        if (GetAsyncKeyState(vk) & 0x8000) {
-            state.anyKeyPressed = true;
-            state.pressedKeyCount++;
-        }
-    }
-    // Check modifier keys
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+    };
+
+    // Check keyboard keys tracked by hooks
+    // A-Z
+    for (int vk = 0x41; vk <= 0x5A; vk++) checkKey(vk);
+    // 0-9
+    for (int vk = 0x30; vk <= 0x39; vk++) checkKey(vk);
+    // Function keys F1-F24
+    for (int vk = VK_F1; vk <= VK_F24; vk++) checkKey(vk);
+
+    // Modifier keys (check left/right variants to avoid double-counting with generic VK)
+    if (g_keyStates[VK_LSHIFT].load(std::memory_order_relaxed) ||
+        g_keyStates[VK_RSHIFT].load(std::memory_order_relaxed)) {
         state.anyKeyPressed = true;
         state.pressedKeyCount++;
+        if (g_keyStates[VK_LSHIFT].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_LSHIFT);
+        if (g_keyStates[VK_RSHIFT].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_RSHIFT);
     }
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {
+    if (g_keyStates[VK_LCONTROL].load(std::memory_order_relaxed) ||
+        g_keyStates[VK_RCONTROL].load(std::memory_order_relaxed)) {
         state.anyKeyPressed = true;
         state.pressedKeyCount++;
+        if (g_keyStates[VK_LCONTROL].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_LCONTROL);
+        if (g_keyStates[VK_RCONTROL].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_RCONTROL);
     }
-    if (GetAsyncKeyState(VK_MENU) & 0x8000) {  // Alt
+    if (g_keyStates[VK_LMENU].load(std::memory_order_relaxed) ||
+        g_keyStates[VK_RMENU].load(std::memory_order_relaxed)) {
         state.anyKeyPressed = true;
         state.pressedKeyCount++;
+        if (g_keyStates[VK_LMENU].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_LMENU);
+        if (g_keyStates[VK_RMENU].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_RMENU);
     }
-    if (GetAsyncKeyState(VK_LWIN) & 0x8000 || GetAsyncKeyState(VK_RWIN) & 0x8000) {
+    if (g_keyStates[VK_LWIN].load(std::memory_order_relaxed) ||
+        g_keyStates[VK_RWIN].load(std::memory_order_relaxed)) {
         state.anyKeyPressed = true;
         state.pressedKeyCount++;
-    }
-    // Check space, enter, tab, escape
-    if (GetAsyncKeyState(VK_SPACE) & 0x8000) {
-        state.anyKeyPressed = true;
-        state.pressedKeyCount++;
-    }
-    if (GetAsyncKeyState(VK_RETURN) & 0x8000) {
-        state.anyKeyPressed = true;
-        state.pressedKeyCount++;
-    }
-    if (GetAsyncKeyState(VK_TAB) & 0x8000) {
-        state.anyKeyPressed = true;
-        state.pressedKeyCount++;
-    }
-    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
-        state.anyKeyPressed = true;
-        state.pressedKeyCount++;
-    }
-    // Check arrow keys
-    if (GetAsyncKeyState(VK_LEFT) & 0x8000 || GetAsyncKeyState(VK_RIGHT) & 0x8000 ||
-        GetAsyncKeyState(VK_UP) & 0x8000 || GetAsyncKeyState(VK_DOWN) & 0x8000) {
-        state.anyKeyPressed = true;
-        state.pressedKeyCount++;
+        if (g_keyStates[VK_LWIN].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_LWIN);
+        if (g_keyStates[VK_RWIN].load(std::memory_order_relaxed)) state.pressedVKs.push_back(VK_RWIN);
     }
 
-    // Check mouse buttons (left, right, middle)
-    if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) {
-        state.mouseButtonPressed = true;
-        state.anyKeyPressed = true;
+    // Space, Enter, Tab, Escape
+    int specialKeys[] = { VK_SPACE, VK_RETURN, VK_TAB, VK_ESCAPE };
+    for (int vk : specialKeys) checkKey(vk);
+    // Arrow keys
+    int arrowKeys[] = { VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN };
+    for (int vk : arrowKeys) checkKey(vk);
+
+    // Mouse buttons (tracked by hook)
+    for (int i = 0; i < 3; i++) {
+        if (g_mouseButtons[i].load(std::memory_order_relaxed)) {
+            state.mouseButtonPressed = true;
+            state.anyKeyPressed = true;
+            state.pressedMouseBtns.push_back(i + 1);  // 1=left, 2=right, 3=middle
+        }
     }
-    if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) {
-        state.mouseButtonPressed = true;
-        state.anyKeyPressed = true;
-    }
-    if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) {
-        state.mouseButtonPressed = true;
-        state.anyKeyPressed = true;
+
+    // Debug: also scan ALL 256 VK codes to find any unexpected ones
+    // that are set but not in our checked ranges
+    for (int vk = 0; vk < 256; vk++) {
+        if (g_keyStates[vk].load(std::memory_order_relaxed)) {
+            // Check if already reported
+            bool found = false;
+            for (int reported : state.pressedVKs) {
+                if (reported == vk) { found = true; break; }
+            }
+            if (!found) {
+                state.pressedVKs.push_back(vk);  // unreported VK - might be the mystery key
+            }
+        }
     }
 
     return state;
@@ -232,6 +244,8 @@ ModifierKeys getModifierKeys() {
 }
 
 // Initialize input capture system
+// Starts the hook thread immediately so that getCurrentInputState()
+// can track key/mouse state even before recording begins.
 void initInputCapture() {
     if (g_keyboardQueue) return;
 
@@ -240,11 +254,32 @@ void initInputCapture() {
     g_mouseMoveQueue = new moodycamel::ReaderWriterQueue<MouseMoveEvent>(4096);
 
     g_lastMouseInitialized = false;
+
+    // Clear tracked key/mouse state
+    for (int i = 0; i < 256; i++) {
+        g_keyStates[i].store(false, std::memory_order_relaxed);
+    }
+    for (int i = 0; i < 3; i++) {
+        g_mouseButtons[i].store(false, std::memory_order_relaxed);
+    }
+
+    // Start hook thread early so we can track key state before recording
+    g_running.store(true);
+    g_hookThread = CreateThread(NULL, 0, HookThreadProc, NULL, 0, &g_hookThreadId);
 }
 
 // Shutdown input capture system
 void shutdownInputCapture() {
     stopInputCapture();
+
+    // Stop the hook thread (started in initInputCapture)
+    g_running.store(false);
+    if (g_hookThread) {
+        PostThreadMessage(g_hookThreadId, WM_QUIT, 0, 0);
+        WaitForSingleObject(g_hookThread, INFINITE);
+        CloseHandle(g_hookThread);
+        g_hookThread = nullptr;
+    }
 
     delete g_keyboardQueue;
     delete g_mouseClickQueue;
@@ -257,51 +292,60 @@ void shutdownInputCapture() {
 
 // Low-level keyboard hook callback
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && g_capturing.load()) {
+    if (nCode == HC_ACTION) {
         KBDLLHOOKSTRUCT* pKeyBoard = (KBDLLHOOKSTRUCT*)lParam;
 
         // Only process key down and key up
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN ||
             wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
 
-            // CRITICAL: Use GetSystemTimePreciseAsFileTime, NOT pKeyBoard->time
-            int64_t timestamp = getHighPrecisionTimestamp();
-
             bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+            int vk = static_cast<int>(pKeyBoard->vkCode);
 
-            // Get modifier keys
-            ModifierKeys mods = getModifierKeys();
-
-            // Get virtual key code
-            int keycode = static_cast<int>(pKeyBoard->vkCode);
-
-            // Get character (if possible)
-            char keyChar = 0;
-            if (isDown) {
-                BYTE keyboardState[256] = {};
-                GetKeyboardState(keyboardState);
-                UINT scanCode = pKeyBoard->scanCode;
-                WCHAR wch[2] = {};
-                if (ToUnicode(keycode, scanCode, keyboardState, wch, 2, 0) > 0) {
-                    if (wch[0] >= 32 && wch[0] < 127) {
-                        keyChar = static_cast<char>(wch[0]);
-                    }
-                }
+            // Always update hook-tracked key state (for getCurrentInputState)
+            if (vk >= 0 && vk < 256) {
+                g_keyStates[vk].store(isDown, std::memory_order_relaxed);
             }
 
-            KeyboardEvent evt;
-            evt.rawTime = timestamp;
-            evt.keycode = keycode;
-            evt.keyChar = keyChar;
-            evt.isDown = isDown;
-            evt.altKey = mods.altKey;
-            evt.ctrlKey = mods.ctrlKey;
-            evt.shiftKey = mods.shiftKey;
-            evt.metaKey = mods.metaKey;
+            // Only enqueue events to the recording queue when capturing
+            if (g_capturing.load()) {
+                // CRITICAL: Use GetSystemTimePreciseAsFileTime, NOT pKeyBoard->time
+                int64_t timestamp = getHighPrecisionTimestamp();
 
-            // Enqueue to lock-free queue (O(1), no blocking)
-            if (g_keyboardQueue) {
-                g_keyboardQueue->enqueue(evt);
+                // Get modifier keys
+                ModifierKeys mods = getModifierKeys();
+
+                // Get virtual key code
+                int keycode = vk;
+
+                // Get character (if possible)
+                char keyChar = 0;
+                if (isDown) {
+                    BYTE keyboardState[256] = {};
+                    GetKeyboardState(keyboardState);
+                    UINT scanCode = pKeyBoard->scanCode;
+                    WCHAR wch[2] = {};
+                    if (ToUnicode(keycode, scanCode, keyboardState, wch, 2, 0) > 0) {
+                        if (wch[0] >= 32 && wch[0] < 127) {
+                            keyChar = static_cast<char>(wch[0]);
+                        }
+                    }
+                }
+
+                KeyboardEvent evt;
+                evt.rawTime = timestamp;
+                evt.keycode = keycode;
+                evt.keyChar = keyChar;
+                evt.isDown = isDown;
+                evt.altKey = mods.altKey;
+                evt.ctrlKey = mods.ctrlKey;
+                evt.shiftKey = mods.shiftKey;
+                evt.metaKey = mods.metaKey;
+
+                // Enqueue to lock-free queue (O(1), no blocking)
+                if (g_keyboardQueue) {
+                    g_keyboardQueue->enqueue(evt);
+                }
             }
         }
     }
@@ -311,16 +355,13 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
 // Low-level mouse hook callback
 LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && g_capturing.load()) {
+    if (nCode == HC_ACTION) {
         MSLLHOOKSTRUCT* pMouse = (MSLLHOOKSTRUCT*)lParam;
 
         // Only process button events, ignore mouse move (handled by polling)
         if (wParam == WM_LBUTTONDOWN || wParam == WM_LBUTTONUP ||
             wParam == WM_RBUTTONDOWN || wParam == WM_RBUTTONUP ||
             wParam == WM_MBUTTONDOWN || wParam == WM_MBUTTONUP) {
-
-            // CRITICAL: Use GetSystemTimePreciseAsFileTime
-            int64_t timestamp = getHighPrecisionTimestamp();
 
             int button = 1;  // default left
             if (wParam == WM_RBUTTONDOWN || wParam == WM_RBUTTONUP) button = 2;
@@ -330,23 +371,34 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
                           wParam == WM_RBUTTONDOWN ||
                           wParam == WM_MBUTTONDOWN);
 
-            // Get modifier keys
-            ModifierKeys mods = getModifierKeys();
+            // Always update hook-tracked mouse state (for getCurrentInputState)
+            if (button >= 1 && button <= 3) {
+                g_mouseButtons[button - 1].store(isDown, std::memory_order_relaxed);
+            }
 
-            MouseClickEvent evt;
-            evt.rawTime = timestamp;
-            evt.x = pMouse->pt.x;
-            evt.y = pMouse->pt.y;
-            evt.button = button;
-            evt.isDown = isDown;
-            evt.altKey = mods.altKey;
-            evt.ctrlKey = mods.ctrlKey;
-            evt.shiftKey = mods.shiftKey;
-            evt.metaKey = mods.metaKey;
+            // Only enqueue events to the recording queue when capturing
+            if (g_capturing.load()) {
+                // CRITICAL: Use GetSystemTimePreciseAsFileTime
+                int64_t timestamp = getHighPrecisionTimestamp();
 
-            // Enqueue to lock-free queue
-            if (g_mouseClickQueue) {
-                g_mouseClickQueue->enqueue(evt);
+                // Get modifier keys
+                ModifierKeys mods = getModifierKeys();
+
+                MouseClickEvent evt;
+                evt.rawTime = timestamp;
+                evt.x = pMouse->pt.x;
+                evt.y = pMouse->pt.y;
+                evt.button = button;
+                evt.isDown = isDown;
+                evt.altKey = mods.altKey;
+                evt.ctrlKey = mods.ctrlKey;
+                evt.shiftKey = mods.shiftKey;
+                evt.metaKey = mods.metaKey;
+
+                // Enqueue to lock-free queue
+                if (g_mouseClickQueue) {
+                    g_mouseClickQueue->enqueue(evt);
+                }
             }
         }
     }
@@ -392,7 +444,8 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
     bool first = true;
 
     // Poll at ~200Hz (Sleep 5ms)
-    while (g_running.load()) {
+    // Runs while g_capturing is true (stops when stopInputCapture is called)
+    while (g_capturing.load()) {
         if (GetCursorPos(&pos)) {
             if (first) {
                 // Initialize on first poll
@@ -434,33 +487,17 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
     return 0;
 }
 
-// Start input capture
+// Start input capture (enable event queueing + start mouse polling)
+// The hook thread is already running from initInputCapture().
 bool startInputCapture() {
     if (g_capturing.load()) return true;
 
-    g_running.store(true);
     g_capturing.store(true);
     g_lastMouseInitialized = false;
-
-    // Start hook thread
-    g_hookThread = CreateThread(NULL, 0, HookThreadProc, NULL, 0, &g_hookThreadId);
-    if (!g_hookThread) {
-        g_running.store(false);
-        g_capturing.store(false);
-        return false;
-    }
 
     // Start mouse polling thread
     g_pollThread = CreateThread(NULL, 0, MousePollThreadProc, NULL, 0, NULL);
     if (!g_pollThread) {
-        // Cleanup hook thread
-        if (g_hookThread) {
-            PostThreadMessage(g_hookThreadId, WM_QUIT, 0, 0);
-            WaitForSingleObject(g_hookThread, INFINITE);
-            CloseHandle(g_hookThread);
-            g_hookThread = nullptr;
-        }
-        g_running.store(false);
         g_capturing.store(false);
         return false;
     }
@@ -468,32 +505,19 @@ bool startInputCapture() {
     return true;
 }
 
-// Stop input capture
+// Stop input capture (disable event queueing + stop mouse polling)
+// The hook thread keeps running for key state tracking until shutdown.
 void stopInputCapture() {
     if (!g_capturing.load()) return;
 
     g_capturing.store(false);
 
-    // Stop running flag
-    g_running.store(false);
-
-    // Stop hook thread
-    if (g_hookThread) {
-        PostThreadMessage(g_hookThreadId, WM_QUIT, 0, 0);
-        WaitForSingleObject(g_hookThread, INFINITE);
-        CloseHandle(g_hookThread);
-        g_hookThread = nullptr;
-    }
-
-    // Stop poll thread
+    // Stop poll thread — it checks g_capturing in its loop
     if (g_pollThread) {
-        WaitForSingleObject(g_pollThread, INFINITE);
+        WaitForSingleObject(g_pollThread, 2000);
         CloseHandle(g_pollThread);
         g_pollThread = nullptr;
     }
-
-    g_keyboardHook = nullptr;
-    g_mouseHook = nullptr;
 }
 
 // Check if input capture is running
