@@ -8,6 +8,20 @@ interface WindowRefs {
   overlayWindow: BrowserWindow | null;
 }
 
+// Timeline log file path
+const timelineLogPath = path.join(app.getPath('userData'), 'recording_timeline.log');
+
+function writeTimelineLog(message: string): void {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] ${message}\n`;
+  try {
+    fs.appendFileSync(timelineLogPath, logLine);
+  } catch (e) {
+    // Ignore file write errors
+  }
+  console.log(logLine.trim());
+}
+
 // Simple preference storage
 const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
 
@@ -66,20 +80,35 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     }
   });
   ipcMain.handle('recorder:start', async (_, config: RecordingConfig): Promise<void> => {
-    await recorderService.start(config);
-    // Recording started successfully — switch to overlay mode
     const windows = getWindows();
-    console.log('[IPC] recorder:start success, switching to overlay. mainWindow:', !!windows.mainWindow, 'overlayWindow:', !!windows.overlayWindow);
+
+    writeTimelineLog('===== RECORDING START SEQUENCE =====');
+    writeTimelineLog('T0: User clicked start button');
+
+    // Hide main window BEFORE starting recording
+    writeTimelineLog('T1: Hiding main window...');
     if (windows.mainWindow && !windows.mainWindow.isDestroyed()) {
       windows.mainWindow.hide();
     }
+    writeTimelineLog('T2: Main window hidden, waiting 200ms...');
+
+    // Small delay to ensure window is fully hidden by OS
+    await new Promise(resolve => setTimeout(resolve, 200));
+    writeTimelineLog('T3: Delay complete, calling recorderService.start()...');
+
+    // Start recording - main window is now hidden
+    const serviceStart = Date.now();
+    await recorderService.start(config);
+    const serviceDuration = Date.now() - serviceStart;
+    writeTimelineLog(`T4: recorderService.start() returned (took ${serviceDuration}ms)`);
+
+    // Show overlay after recording started
+    writeTimelineLog('T5: Showing overlay window...');
     if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
-      const bounds = windows.overlayWindow.getBounds();
-      console.log('[IPC] overlay bounds:', JSON.stringify(bounds));
-      console.log('[IPC] overlay isVisible before show:', windows.overlayWindow.isVisible());
       windows.overlayWindow.showInactive();
-      console.log('[IPC] overlay isVisible after show:', windows.overlayWindow.isVisible());
     }
+    writeTimelineLog('T6: Overlay window shown');
+    writeTimelineLog('===== RECORDING START SEQUENCE COMPLETE =====\n');
   });
 
   ipcMain.handle('recorder:stop', async () => {

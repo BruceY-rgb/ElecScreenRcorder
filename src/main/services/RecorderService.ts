@@ -5,6 +5,19 @@ import path from 'path';
 import fs from 'fs';
 import net from 'net';
 
+// Timeline log file path
+const timelineLogPath = path.join(app.getPath('userData'), 'recording_timeline.log');
+
+function writeTimelineLog(message: string): void {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] [SERVICE] ${message}\n`;
+  try {
+    fs.appendFileSync(timelineLogPath, logLine);
+  } catch (e) {
+    // Ignore file write errors
+  }
+}
+
 export interface RecordingConfig {
   resolution: { width: number; height: number };
   fps: number;
@@ -28,6 +41,8 @@ export interface RecordingStatus {
     anyKeyPressed: boolean;
     mouseButtonPressed: boolean;
     pressedKeyCount: number;
+    pressedKeys?: string[];
+    pressedMouseButtons?: number[];
   };
 }
 
@@ -86,6 +101,42 @@ interface PendingRequest {
   reject: PendingRejecter;
   timeout: NodeJS.Timeout;
   expectedType: string;
+}
+
+// VK code to key name mapping
+const VK_TO_KEY: Record<number, string> = {
+  // A-Z
+  0x41: 'A', 0x42: 'B', 0x43: 'C', 0x44: 'D', 0x45: 'E',
+  0x46: 'F', 0x47: 'G', 0x48: 'H', 0x49: 'I', 0x4A: 'J',
+  0x4B: 'K', 0x4C: 'L', 0x4D: 'M', 0x4E: 'N', 0x4F: 'O',
+  0x50: 'P', 0x51: 'Q', 0x52: 'R', 0x53: 'S', 0x54: 'T',
+  0x55: 'U', 0x56: 'V', 0x57: 'W', 0x58: 'X', 0x59: 'Y', 0x5A: 'Z',
+  // 0-9
+  0x30: '0', 0x31: '1', 0x32: '2', 0x33: '3', 0x34: '4',
+  0x35: '5', 0x36: '6', 0x37: '7', 0x38: '8', 0x39: '9',
+  // F1-F12
+  0x70: 'F1', 0x71: 'F2', 0x72: 'F3', 0x73: 'F4', 0x74: 'F5',
+  0x75: 'F6', 0x76: 'F7', 0x77: 'F8', 0x78: 'F9', 0x79: 'F10',
+  0x7A: 'F11', 0x7B: 'F12',
+  // Modifiers
+  0x10: 'Shift', 0x11: 'Ctrl', 0x12: 'Alt', 0x5B: 'Win', 0x5C: 'Win',
+  // Special keys
+  0x20: 'Space', 0x09: 'Tab', 0x0D: 'Enter', 0x08: 'Back',
+  0x2D: 'Ins', 0x2E: 'Del', 0x23: 'End', 0x24: 'Home',
+  0x21: 'PgUp', 0x22: 'PgDn',
+  // Arrow keys
+  0x25: '←', 0x26: '↑', 0x27: '→', 0x28: '↓',
+  // Numpad
+  0x60: 'Num0', 0x61: 'Num1', 0x62: 'Num2', 0x63: 'Num3', 0x64: 'Num4',
+  0x65: 'Num5', 0x66: 'Num6', 0x67: 'Num7', 0x68: 'Num8', 0x69: 'Num9',
+  0x6A: 'Num*', 0x6B: 'Num+', 0x6D: 'Num-', 0x6E: 'Num.',
+  // Punctuation
+  0xBA: ';', 0xBB: '=', 0xBC: ',', 0xBD: '-', 0xBE: '.', 0xBF: '/', 0xC0: '`',
+  0xDB: '[', 0xDC: '\\', 0xDD: ']', 0xDE: '\'',
+};
+
+function mapVKToName(vk: number): string {
+  return VK_TO_KEY[vk] || `VK${vk.toString(16).toUpperCase()}`;
 }
 
 export class RecorderService {
@@ -221,6 +272,8 @@ export class RecorderService {
       throw new Error(`Cannot start recording: already ${this.state}`);
     }
 
+    writeTimelineLog('S1: start() called, preparing...');
+
     // Generate default save path if not provided
     let savePath = config.savePath;
     const organizeByTimestamp = config.organizeByTimestamp !== false; // 默认启用
@@ -268,7 +321,13 @@ export class RecorderService {
       fs.mkdirSync(saveDir, { recursive: true });
     }
 
+    writeTimelineLog('S2: Connecting to native core...');
+    const connectStart = Date.now();
     await this.connect();
+    writeTimelineLog(`S3: Connected to native (took ${Date.now() - connectStart}ms)`);
+
+    writeTimelineLog('S4: Sending start command to native...');
+    const cmdStart = Date.now();
 
     const command = {
       action: 'start',
@@ -287,11 +346,14 @@ export class RecorderService {
 
     // Send start command and wait for native core response
     const response = await this.sendCommandWithResponse('status', command, 10000);
+    writeTimelineLog(`S5: Command response received (took ${Date.now() - cmdStart}ms), state: ${response.state}`);
 
     // Native core responds with {"state":"recording","type":"status"} on success
     if (response.state !== 'recording') {
       throw new Error(`Failed to start recording: native core returned state '${response.state}'`);
     }
+
+    writeTimelineLog('S6: Recording started successfully');
 
     this.state = 'recording';
     this.recordingStartTime = Date.now();
@@ -680,6 +742,7 @@ export class RecorderService {
 
   private startStatusBroadcast(): void {
     this.stopStatusBroadcast();
+    // Poll input state at higher frequency (200ms) to catch momentary key presses
     this.statusBroadcastTimer = setInterval(async () => {
       this.updateDuration();
       // Poll input state during recording
@@ -693,7 +756,7 @@ export class RecorderService {
       } else {
         this.broadcastStatus();
       }
-    }, 1000);
+    }, 200);
   }
 
   private stopStatusBroadcast(): void {
@@ -801,11 +864,19 @@ export class RecorderService {
     };
 
     if (inputState) {
+      // Convert VK codes to key names
+      const pressedKeys = (inputState.pressedVKs || []).map(vk => mapVKToName(vk));
+
       status.inputState = {
         anyKeyPressed: inputState.anyKeyPressed,
         mouseButtonPressed: inputState.mouseButtonPressed,
         pressedKeyCount: inputState.pressedKeyCount,
+        pressedKeys,
+        pressedMouseButtons: inputState.pressedMouseBtns || [],
       };
+      console.log('[DEBUG] Broadcasting status with inputState:', JSON.stringify(status.inputState));
+    } else {
+      console.log('[DEBUG] Broadcasting status without inputState');
     }
 
     BrowserWindow.getAllWindows().forEach((win) => {

@@ -125,6 +125,8 @@
       </div>
     </div>
     <script>
+      console.log('[OVERLAY] Script loading...');
+
       const indicator = document.getElementById('indicator');
       const statusEl = document.getElementById('status');
       const durationEl = document.getElementById('duration');
@@ -143,7 +145,7 @@
 
       // Listen for status updates
       window.electronAPI.onRecordingStatus((status) => {
-        console.log('Status update:', status);
+        console.log('[OVERLAY] Status update received:', JSON.stringify(status));
         updateUI(status.state, status.duration, status.resolution, status.fps, status.inputState);
       });
 
@@ -204,18 +206,36 @@
       }
 
       function updateInputStatus() {
-        if (!currentInputState || currentInputState.pressedKeyCount === 0 && !currentInputState.mouseButtonPressed) {
+        console.log('[OVERLAY] updateInputStatus called, currentInputState:', JSON.stringify(currentInputState));
+
+        // Show badges if any key is pressed OR mouse is pressed
+        if (!currentInputState) {
+          inputStatusEl.innerHTML = '';
+          return;
+        }
+
+        const keys = currentInputState.pressedKeys || [];
+        const mouseBtns = currentInputState.pressedMouseButtons || [];
+
+        if (keys.length === 0 && mouseBtns.length === 0) {
           inputStatusEl.innerHTML = '';
           return;
         }
 
         let html = '';
-        if (currentInputState.pressedKeyCount > 0) {
-          html += `<span class="input-badge active">KEY: ${currentInputState.pressedKeyCount}</span>`;
+
+        // Show key names (e.g., "Ctrl+A")
+        if (keys.length > 0) {
+          html += `<span class="input-badge active">${keys.join('+')}</span>`;
         }
-        if (currentInputState.mouseButtonPressed) {
-          html += `<span class="input-badge active">MOUSE</span>`;
+
+        // Show mouse buttons: 1=L(左), 2=R(右), 3=M(中)
+        if (mouseBtns.length > 0) {
+          const btnNames = mouseBtns.map(b => b === 1 ? 'L' : b === 2 ? 'R' : b === 3 ? 'M' : `B${b}`);
+          html += `<span class="input-badge active">M:${btnNames.join('+')}</span>`;
         }
+
+        console.log('[OVERLAY] Setting inputStatusEl html:', html);
         inputStatusEl.innerHTML = html;
       }
 

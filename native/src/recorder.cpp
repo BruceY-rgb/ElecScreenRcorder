@@ -13,6 +13,30 @@
 #include <sstream>
 #include <thread>
 #include <chrono>
+#include <fstream>
+
+// Timeline log file
+static std::ofstream g_timelineLogFile;
+
+static int64_t getTimestampMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
+static void writeNativeLog(const char* message) {
+    int64_t ts = getTimestampMs();
+    std::string logLine = "[NATIVE " + std::to_string(ts) + "] " + message + "\n";
+
+    // Write to file
+    if (g_timelineLogFile.is_open()) {
+        g_timelineLogFile << logLine;
+        g_timelineLogFile.flush();
+    }
+
+    // Also output to cerr for debugging
+    std::cerr << logLine;
+}
 
 // Global recorder instance
 Recorder* g_recorder = nullptr;
@@ -26,9 +50,16 @@ Recorder::Recorder()
 
 Recorder::~Recorder() {
     shutdown();
+    if (g_timelineLogFile.is_open()) {
+        g_timelineLogFile.close();
+    }
 }
 
 bool Recorder::initialize(const std::wstring& modulePath) {
+    // Open timeline log file
+    g_timelineLogFile.open("recording_timeline.log", std::ios::app);
+    writeNativeLog("===== NATIVE CORE INITIALIZED =====");
+
     // Set FFmpeg path from module path
     std::wstring ffmpegW = modulePath;
     if (ffmpegW.empty()) {
@@ -103,6 +134,7 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     cmd << " -draw_mouse 1";
     cmd << " -video_size " << config.width << "x" << config.height;
     cmd << " -i desktop";
+    cmd << " -use_wallclock_as_timestamps 0";
 
     // Count audio inputs
     int audioInputCount = 0;
@@ -175,6 +207,10 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
         cmd << " -map 0:v";
     }
 
+    // Timestamp control - ensure video starts at 0
+    cmd << " -avoid_negative_ts make_zero";
+    cmd << " -vsync cfr";
+
     // Output
     cmd << " -f matroska \"" << config.savePath << "\"";
 
@@ -182,6 +218,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 }
 
 bool Recorder::startFFmpeg(const std::string& command) {
+    writeNativeLog("F1: startFFmpeg() called, creating process...");
+
     std::cerr << "[RECORDER] startFFmpeg: BEGIN" << std::endl;
 
     STARTUPINFOA si = {};
@@ -209,10 +247,13 @@ bool Recorder::startFFmpeg(const std::string& command) {
     free(cmdLine);
     ffmpegProcess_ = pi;
 
+    writeNativeLog((std::string("F2: FFmpeg process created, PID: ") + std::to_string(pi.dwProcessId)).c_str());
     std::cerr << "[RECORDER] startFFmpeg: FFmpeg process created (PID: " << pi.dwProcessId << ")" << std::endl;
 
+    writeNativeLog("F3: Sleeping 500ms for FFmpeg initialization...");
     // Give FFmpeg time to start and output any errors
-    Sleep(3000);
+    Sleep(500);
+    writeNativeLog("F4: Sleep done, verifying process...");
 
     // Check if FFmpeg is still running or exited with error
     DWORD exitCode;
@@ -225,6 +266,7 @@ bool Recorder::startFFmpeg(const std::string& command) {
         }
     }
 
+    writeNativeLog("F5: FFmpeg is running, recording active");
     return true;
 }
 
@@ -236,6 +278,8 @@ void Recorder::sendToFFmpeg(const char* cmd, size_t len) {
 }
 
 bool Recorder::startRecording(const RecordingConfig& config) {
+    writeNativeLog("N1: startRecording() called");
+
     std::cout << "[RECORDER] startRecording: BEGIN" << std::endl;
     std::cout << "[RECORDER] startRecording: current state=" << (int)state_ << std::endl;
 
@@ -261,7 +305,9 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     std::string command = buildFFmpegCommand(config);
     std::cerr << "[RECORDER] startRecording: FFmpeg command: " << command << std::endl;
 
+    writeNativeLog("N2: Calling startFFmpeg()...");
     bool started = startFFmpeg(command);
+    writeNativeLog((std::string("N3: startFFmpeg() returned: ") + (started ? "true" : "false")).c_str());
     std::cerr << "[RECORDER] startRecording: startFFmpeg returned " << started << std::endl;
 
     // If failed and audio was enabled, try without audio
@@ -289,6 +335,7 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     state_ = RecordingState::RECORDING;
     totalPausedDuration_ = 0;
 
+    writeNativeLog("N4: Recording started successfully");
     std::cerr << "[RECORDER] startRecording: Recording started successfully" << std::endl;
     return true;
 }
@@ -339,6 +386,11 @@ void Recorder::shutdown() {
     if (ffmpegProcess_.hProcess) {
         CloseHandle(ffmpegProcess_.hProcess);
         CloseHandle(ffmpegProcess_.hThread);
+    }
+
+    if (g_timelineLogFile.is_open()) {
+        writeNativeLog("===== NATIVE CORE SHUTDOWN =====");
+        g_timelineLogFile.close();
     }
 
     std::cout << "[RECORDER] Shutdown complete" << std::endl;

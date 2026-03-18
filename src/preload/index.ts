@@ -20,6 +20,8 @@ export interface RecordingStatus {
     anyKeyPressed: boolean;
     mouseButtonPressed: boolean;
     pressedKeyCount: number;
+    pressedKeys?: string[];
+    pressedMouseButtons?: number[];
   };
 }
 
@@ -46,6 +48,8 @@ export interface InputState {
   anyKeyPressed: boolean;
   mouseButtonPressed: boolean;
   pressedKeyCount: number;
+  pressedKeys?: string[];
+  pressedMouseButtons?: number[];
 }
 
 const electronAPI = {

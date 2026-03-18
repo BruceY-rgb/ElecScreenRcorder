@@ -507,6 +507,9 @@ public:
                 break;
             case CommandType::CHECK_INPUT: {
                 InputState inputState = getCurrentInputState();
+                std::cerr << "[DEBUG] CHECK_INPUT: anyKeyPressed=" << inputState.anyKeyPressed
+                          << " mouseButtonPressed=" << inputState.mouseButtonPressed
+                          << " pressedKeyCount=" << inputState.pressedKeyCount << std::endl;
                 sendResponse(createInputStateResponse(inputState));
                 break;
             }
