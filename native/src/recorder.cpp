@@ -44,6 +44,7 @@ Recorder* g_recorder = nullptr;
 Recorder::Recorder()
     : state_(RecordingState::IDLE)
     , encoderType_(EncoderType::NONE)
+    , ffmpegStdin_(nullptr)
 {
     memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
 }
@@ -307,12 +308,29 @@ bool Recorder::startFFmpeg(const std::string& command) {
     // Ensure the read end is not inherited by the child process
     SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
+    // Create stdin pipe for sending commands to FFmpeg
+    HANDLE hStdinRead = NULL;
+    HANDLE hStdinWrite = NULL;
+
+    if (!CreatePipe(&hStdinRead, &hStdinWrite, &sa, 0)) {
+        writeNativeLog("F_ERROR: Failed to create stdin pipe");
+        CloseHandle(hStderrRead);
+        CloseHandle(hStderrWrite);
+        return false;
+    }
+
+    // Ensure the read end is inherited by child, write end is not
+    SetHandleInformation(hStdinWrite, HANDLE_FLAG_INHERIT, 0);
+
+    // Store stdin write handle for later use in stopRecording()
+    ffmpegStdin_ = hStdinWrite;
+
     STARTUPINFOA si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput = hStdinRead;     // Redirect stdin from pipe
     si.hStdOutput = hStderrWrite;  // Redirect stdout to pipe
     si.hStdError = hStderrWrite;   // Redirect stderr to pipe
 
@@ -326,11 +344,15 @@ bool Recorder::startFFmpeg(const std::string& command) {
         free(cmdLine);
         CloseHandle(hStderrRead);
         CloseHandle(hStderrWrite);
+        CloseHandle(hStdinRead);
+        CloseHandle(hStdinWrite);
+        ffmpegStdin_ = nullptr;
         return false;
     }
 
     free(cmdLine);
     CloseHandle(hStderrWrite);  // Close write end - only child uses it
+    CloseHandle(hStdinRead);    // Close read end - only child uses it
     ffmpegProcess_ = pi;
 
     writeNativeLog(("F3: FFmpeg process created, PID: " + std::to_string(pi.dwProcessId)).c_str());
@@ -351,6 +373,11 @@ bool Recorder::startFFmpeg(const std::string& command) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+        // Close stdin handle on error
+        if (ffmpegStdin_) {
+            CloseHandle(ffmpegStdin_);
+            ffmpegStdin_ = nullptr;
+        }
         return false;
     }
 
@@ -428,14 +455,38 @@ bool Recorder::startRecording(const RecordingConfig& config) {
 void Recorder::stopRecording() {
     if (state_ == RecordingState::IDLE) return;
 
-    // Send quit command to FFmpeg
-    if (ffmpegProcess_.hProcess) {
-        // Give FFmpeg a moment to finish writing
-        Sleep(500);
+    writeNativeLog("S1: stopRecording() called, sending quit to FFmpeg...");
 
-        // Terminate the process if still running
+    // Send quit command to FFmpeg for graceful shutdown
+    if (ffmpegProcess_.hProcess && ffmpegStdin_) {
+        // Send 'q' to FFmpeg stdin to request graceful shutdown
+        const char quitCmd = 'q';
+        DWORD bytesWritten = 0;
+        WriteFile(ffmpegStdin_, &quitCmd, 1, &bytesWritten, NULL);
+        FlushFileBuffers(ffmpegStdin_);
+        CloseHandle(ffmpegStdin_);
+        ffmpegStdin_ = nullptr;
+        writeNativeLog("S2: Sent 'q' to FFmpeg, waiting for graceful exit...");
+
+        // Wait for FFmpeg to exit gracefully (max 10 seconds)
+        const DWORD maxWaitMs = 10000;
+        DWORD waitResult = WaitForSingleObject(ffmpegProcess_.hProcess, maxWaitMs);
+
+        if (waitResult == WAIT_TIMEOUT) {
+            writeNativeLog("S3: FFmpeg did not exit gracefully, forcing termination");
+            // Force terminate if still running after timeout
+            TerminateProcess(ffmpegProcess_.hProcess, 0);
+        } else {
+            writeNativeLog("S3: FFmpeg exited gracefully");
+        }
+    } else if (ffmpegProcess_.hProcess) {
+        // Fallback: just terminate if no stdin handle
+        writeNativeLog("S2: No stdin handle, forcing termination");
         TerminateProcess(ffmpegProcess_.hProcess, 0);
+    }
 
+    // Clean up process handles
+    if (ffmpegProcess_.hProcess) {
         CloseHandle(ffmpegProcess_.hProcess);
         CloseHandle(ffmpegProcess_.hThread);
         memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
@@ -464,8 +515,14 @@ void Recorder::resumeRecording() {
 }
 
 void Recorder::shutdown() {
-    if (state_ == RecordingState::RECORDING) {
+    if (state_ == RecordingState::RECORDING || state_ == RecordingState::PAUSED) {
         stopRecording();
+    }
+
+    // Clean up stdin handle if still open
+    if (ffmpegStdin_) {
+        CloseHandle(ffmpegStdin_);
+        ffmpegStdin_ = nullptr;
     }
 
     if (ffmpegProcess_.hProcess) {
