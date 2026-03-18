@@ -88,12 +88,15 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
               << " fps=" << config.fps
               << " videoBitrate=" << config.videoBitrate
               << " captureAudio=" << config.captureAudio
+              << " captureMicrophone=" << config.captureMicrophone
+              << " separateAudio=" << config.separateAudio
               << " audioBitrate=" << config.audioBitrate << std::endl;
 
     // Global options
     cmd << " -y";  // Overwrite output
 
-    // Input - Windows screen capture using GDI
+    // ===== INPUTS FIRST =====
+    // Video input - Windows screen capture using GDI
     cmd << " -f gdigrab";
     cmd << " -framerate " << config.fps;
     cmd << " -offset_x 0 -offset_y 0";
@@ -101,6 +104,28 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     cmd << " -video_size " << config.width << "x" << config.height;
     cmd << " -i desktop";
 
+    // Count audio inputs
+    int audioInputCount = 0;
+
+    // System audio input (if enabled) - use WASAPI
+    if (config.captureAudio) {
+        cmd << " -f wasapi -i \"audio=Speakers\"";
+        audioInputCount++;
+    }
+
+    // Microphone input (if enabled) - use dshow
+    if (config.captureMicrophone) {
+        cmd << " -f dshow -i audio=\"";
+        if (!config.microphoneDevice.empty()) {
+            cmd << config.microphoneDevice;
+        } else {
+            cmd << "virtual-audio-capturer";
+        }
+        cmd << "\"";
+        audioInputCount++;
+    }
+
+    // ===== OUTPUT OPTIONS AFTER ALL INPUTS =====
     // Video encoder
     cmd << " -c:v ";
     switch (encoderType_) {
@@ -122,17 +147,32 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
             cmd << " -tune zerolatency";
     }
 
+    // Video bitrate options
     cmd << " -b:v " << config.videoBitrate << "k";
     cmd << " -maxrate " << (config.videoBitrate * 1.5) << "k";
     cmd << " -bufsize " << (config.videoBitrate * 2) << "k";
 
-    // System audio capture using WASAPI (Windows 10/11)
-    if (config.captureAudio) {
-        // Use default audio device (system speakers)
-        cmd << " -f wasapi -i audio=default";
-        // Audio encoder
+    // Audio encoder (if any audio input enabled)
+    if (audioInputCount > 0) {
         cmd << " -c:a aac";
         cmd << " -b:a " << config.audioBitrate << "k";
+    }
+
+    // Map inputs based on configuration
+    if (audioInputCount == 2 && config.separateAudio) {
+        // Separate audio tracks: system audio + microphone as separate streams
+        // Map: video from input 0, system audio from input 1, microphone from input 2
+        cmd << " -map 0:v -map 1:a -map 2:a";
+    } else if (audioInputCount == 2) {
+        // Mix both audio sources into one track
+        cmd << " -filter_complex \"[1:a][2:a]amix=inputs=2:duration=longest[aout]\"";
+        cmd << " -map 0:v -map \"[aout]\"";
+    } else if (audioInputCount == 1) {
+        // Single audio source
+        cmd << " -map 0:v -map 1:a";
+    } else {
+        // Video only
+        cmd << " -map 0:v";
     }
 
     // Output
@@ -171,13 +211,18 @@ bool Recorder::startFFmpeg(const std::string& command) {
 
     std::cerr << "[RECORDER] startFFmpeg: FFmpeg process created (PID: " << pi.dwProcessId << ")" << std::endl;
 
-    // Give FFmpeg a moment to start and output any errors
-    Sleep(2000);
+    // Give FFmpeg time to start and output any errors
+    Sleep(3000);
 
-    // Check if still running
+    // Check if FFmpeg is still running or exited with error
     DWORD exitCode;
     if (GetExitCodeProcess(pi.hProcess, &exitCode)) {
-        std::cerr << "[RECORDER] startFFmpeg: FFmpeg exitCode=" << exitCode << std::endl;
+        std::cerr << "[RECORDER] startFFmpeg: FFmpeg exitCode=" << exitCode << " (STILL_ACTIVE=" << STILL_ACTIVE << ")" << std::endl;
+        // If process has already exited (not STILL_ACTIVE), it means FFmpeg failed immediately
+        if (exitCode != STILL_ACTIVE) {
+            std::cerr << "[RECORDER] startFFmpeg: FFmpeg exited early with error code " << exitCode << std::endl;
+            return false;
+        }
     }
 
     return true;
@@ -218,6 +263,20 @@ bool Recorder::startRecording(const RecordingConfig& config) {
 
     bool started = startFFmpeg(command);
     std::cerr << "[RECORDER] startRecording: startFFmpeg returned " << started << std::endl;
+
+    // If failed and audio was enabled, try without audio
+    if (!started && (config.captureAudio || config.captureMicrophone)) {
+        std::cerr << "[RECORDER] startRecording: FFmpeg failed with audio, retrying without audio" << std::endl;
+        RecordingConfig noAudioConfig = config;
+        noAudioConfig.captureAudio = false;
+        noAudioConfig.captureMicrophone = false;
+        command = buildFFmpegCommand(noAudioConfig);
+        std::cerr << "[RECORDER] startRecording: Retry FFmpeg command: " << command << std::endl;
+        started = startFFmpeg(command);
+        if (started) {
+            std::cerr << "[RECORDER] startRecording: Recording started successfully (without audio)" << std::endl;
+        }
+    }
 
     if (!started) {
         std::cerr << "[RECORDER] startRecording: startFFmpeg failed" << std::endl;

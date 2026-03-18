@@ -1,4 +1,4 @@
-import { useRecorder } from './hooks/useRecorder';
+import { useRecorder, SystemInfo } from './hooks/useRecorder';
 import RecordingControls from './components/RecordingControls';
 import SystemStatus from './components/SystemStatus';
 
@@ -13,7 +13,7 @@ function App() {
 
       <main className="main">
         {error && <div className="error">{error}</div>}
-        <RecordingControls />
+        <RecordingControls systemInfo={systemInfo} />
       </main>
 
       <SystemStatus systemInfo={systemInfo} />

@@ -25,7 +25,8 @@ struct RecordingConfig {
     bool separateAudio = false;
     bool remuxToMp4 = false;
     bool captureAudio = true;   // Enable system audio by default
-    std::string audioDevice;    // Audio device name (empty = default)
+    bool captureMicrophone = false;  // Enable microphone capture
+    std::string microphoneDevice;     // Microphone device name (empty = default)
 };
 
 /**

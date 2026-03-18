@@ -14,6 +14,13 @@ export interface RecordingStatus {
   state: 'idle' | 'recording' | 'paused';
   duration: number;
   frameCount: number;
+  resolution?: { width: number; height: number };
+  fps?: number;
+  inputState?: {
+    anyKeyPressed: boolean;
+    mouseButtonPressed: boolean;
+    pressedKeyCount: number;
+  };
 }
 
 export interface SystemInfo {

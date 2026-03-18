@@ -12,6 +12,8 @@ export interface RecordingConfig {
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
+  captureAudio?: boolean;
+  captureMicrophone?: boolean;
   // 新增：是否将文件整理到时间戳文件夹
   organizeByTimestamp?: boolean;
 }
@@ -20,6 +22,13 @@ export interface RecordingStatus {
   state: 'idle' | 'recording' | 'paused' | 'reconnecting';
   duration: number;
   frameCount: number;
+  resolution?: { width: number; height: number };
+  fps?: number;
+  inputState?: {
+    anyKeyPressed: boolean;
+    mouseButtonPressed: boolean;
+    pressedKeyCount: number;
+  };
 }
 
 export interface SystemInfo {
@@ -112,6 +121,9 @@ export class RecorderService {
 
   // Remux to MP4 after recording
   private shouldRemuxToMp4: boolean = false;
+
+  // Current recording config (for broadcasting to overlay)
+  private currentConfig: RecordingConfig | null = null;
 
   constructor(config: RecorderConfig) {
     this.config = config;
@@ -268,6 +280,8 @@ export class RecorderService {
         savePath,
         separateAudio: config.separateAudio,
         remuxToMp4: config.remuxToMp4,
+        captureAudio: config.captureAudio ?? true,
+        captureMicrophone: config.captureMicrophone ?? false,
       },
     };
 
@@ -284,6 +298,7 @@ export class RecorderService {
     this.duration = 0;
     this.frameCount = 0;
     this.shouldRemuxToMp4 = config.remuxToMp4;
+    this.currentConfig = config;
 
     this.log('INFO', `Recording started: ${config.resolution.width}x${config.resolution.height} @ ${config.fps}fps`);
     this.broadcastStatus();
@@ -301,6 +316,7 @@ export class RecorderService {
     this.state = 'idle';
     this.stopHeartbeat();
     this.stopStatusBroadcast();
+    this.currentConfig = null;
     this.log('INFO', 'Recording stopped');
     this.broadcastStatus();
 
@@ -664,9 +680,19 @@ export class RecorderService {
 
   private startStatusBroadcast(): void {
     this.stopStatusBroadcast();
-    this.statusBroadcastTimer = setInterval(() => {
+    this.statusBroadcastTimer = setInterval(async () => {
       this.updateDuration();
-      this.broadcastStatus();
+      // Poll input state during recording
+      if (this.state === 'recording') {
+        try {
+          const inputState = await this.checkInputState();
+          this.broadcastStatusWithInput(inputState);
+        } catch {
+          this.broadcastStatus();
+        }
+      } else {
+        this.broadcastStatus();
+      }
     }, 1000);
   }
 
@@ -760,13 +786,27 @@ export class RecorderService {
   }
 
   private broadcastStatus(): void {
+    this.broadcastStatusWithInput(undefined);
+  }
+
+  private broadcastStatusWithInput(inputState?: InputState): void {
     // Map 'reconnecting' to 'idle' for the renderer (it doesn't know about reconnecting)
     const frontendState = this.state === 'reconnecting' ? 'idle' : this.state;
     const status: RecordingStatus = {
       state: frontendState,
       duration: this.duration,
       frameCount: this.frameCount,
+      resolution: this.currentConfig?.resolution,
+      fps: this.currentConfig?.fps,
     };
+
+    if (inputState) {
+      status.inputState = {
+        anyKeyPressed: inputState.anyKeyPressed,
+        mouseButtonPressed: inputState.mouseButtonPressed,
+        pressedKeyCount: inputState.pressedKeyCount,
+      };
+    }
 
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('recording-status', status);

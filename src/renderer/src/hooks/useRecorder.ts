@@ -8,6 +8,7 @@ export interface RecordingConfig {
   separateAudio: boolean;
   remuxToMp4: boolean;
   captureAudio?: boolean;
+  captureMicrophone?: boolean;
   organizeByTimestamp?: boolean;
 }
 
@@ -15,6 +16,13 @@ export interface RecordingStatus {
   state: 'idle' | 'recording' | 'paused';
   duration: number;
   frameCount: number;
+  resolution?: { width: number; height: number };
+  fps?: number;
+  inputState?: {
+    anyKeyPressed: boolean;
+    mouseButtonPressed: boolean;
+    pressedKeyCount: number;
+  };
 }
 
 export interface SystemInfo {

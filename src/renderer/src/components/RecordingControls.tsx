@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { useRecorder, RecordingConfig } from '../hooks/useRecorder';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useRecorder, RecordingConfig, SystemInfo } from '../hooks/useRecorder';
 
 function formatDuration(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -9,7 +9,19 @@ function formatDuration(ms: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function RecordingControls() {
+interface RecordingControlsProps {
+  systemInfo: SystemInfo | null;
+}
+
+function RecordingControls({ systemInfo }: RecordingControlsProps) {
+  // Get default resolution from systemInfo
+  const getDefaultResolution = () => {
+    if (systemInfo?.screenWidth && systemInfo?.screenHeight) {
+      return { width: systemInfo.screenWidth, height: systemInfo.screenHeight };
+    }
+    return { width: 1920, height: 1080 }; // Fallback
+  };
+
   const {
     status,
     isIdle,
@@ -27,13 +39,14 @@ function RecordingControls() {
   } = useRecorder();
 
   const [config, setConfig] = useState<RecordingConfig>({
-    resolution: { width: 2560, height: 1440 },
+    resolution: getDefaultResolution(),
     fps: 60,
     bitrate: 15000,
     savePath: '',
     separateAudio: true,
     remuxToMp4: false,
     captureAudio: true,
+    captureMicrophone: false,
     organizeByTimestamp: true,
   });
 
@@ -67,6 +80,47 @@ function RecordingControls() {
       }
     });
   }, []);
+
+  // Dynamic resolution options based on screen size
+  const resolutionOptions = useMemo(() => {
+    const screenWidth = systemInfo?.screenWidth || 1920;
+    const screenHeight = systemInfo?.screenHeight || 1080;
+
+    const options = [
+      { value: '1280x720', label: '1280×720 (720p)', width: 1280, height: 720 },
+      { value: '1920x1080', label: '1920×1080 (1080p)', width: 1920, height: 1080 },
+      { value: '2560x1440', label: '2560×1440 (2K)', width: 2560, height: 1440 },
+      { value: '3840x2160', label: '3840×2160 (4K)', width: 3840, height: 2160 },
+      // Add current screen size as an option
+      { value: `${screenWidth}x${screenHeight}`, label: `${screenWidth}×${screenHeight} (当前屏幕)`, width: screenWidth, height: screenHeight },
+    ];
+
+    // Deduplicate and filter out options larger than screen
+    return options.filter((opt, index, self) =>
+      self.findIndex(o => o.width === opt.width && o.height === opt.height) === index
+    ).filter(opt => opt.width <= screenWidth && opt.height <= screenHeight);
+  }, [systemInfo?.screenWidth, systemInfo?.screenHeight]);
+
+  // Auto-adjust resolution if current selection exceeds screen or use screen size as default
+  useEffect(() => {
+    if (systemInfo && resolutionOptions.length > 0) {
+      const screenWidth = systemInfo.screenWidth;
+      const screenHeight = systemInfo.screenHeight;
+
+      // Check if screen size is available in options (it should be now)
+      const screenOption = resolutionOptions.find(
+        opt => opt.width === screenWidth && opt.height === screenHeight
+      );
+
+      // Default to current screen size if available
+      if (screenOption) {
+        setConfig(prev => ({
+          ...prev,
+          resolution: { width: screenWidth, height: screenHeight }
+        }));
+      }
+    }
+  }, [systemInfo, resolutionOptions]);
 
   // Hotkey configuration state
   const [hotkeys, setHotkeys] = useState({
@@ -268,10 +322,9 @@ function RecordingControls() {
                   setConfig({ ...config, resolution: { width, height } });
                 }}
               >
-                <option value="1280x720">1280×720 (720p)</option>
-                <option value="1920x1080">1920×1080 (1080p)</option>
-                <option value="2560x1440">2560×1440 (2K)</option>
-                <option value="3840x2160">3840×2160 (4K)</option>
+                {resolutionOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
 
@@ -342,6 +395,15 @@ function RecordingControls() {
                 onChange={(e) => setConfig({ ...config, separateAudio: e.target.checked })}
               />
               Separate Audio Tracks
+            </label>
+
+            <label className="setting-checkbox">
+              <input
+                type="checkbox"
+                checked={config.captureMicrophone ?? false}
+                onChange={(e) => setConfig({ ...config, captureMicrophone: e.target.checked })}
+              />
+              Microphone
             </label>
 
             <label className="setting-checkbox">

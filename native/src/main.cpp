@@ -359,6 +359,7 @@ public:
         obsConfig.separateAudio = config.separateAudio;
         obsConfig.remuxToMp4 = config.remuxToMp4;
         obsConfig.captureAudio = config.captureAudio;
+        obsConfig.captureMicrophone = config.captureMicrophone;
 
         Recorder* recorder = getRecorder();
         if (!recorder || !recorder->startRecording(obsConfig)) {

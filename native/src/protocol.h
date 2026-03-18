@@ -42,6 +42,7 @@ struct StartConfig {
     bool separateAudio = false;      // Separate audio tracks
     bool remuxToMp4 = false;         // Convert to MP4 after recording
     bool captureAudio = true;        // Capture system audio
+    bool captureMicrophone = false;  // Capture microphone
 };
 
 /**

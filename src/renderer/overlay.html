@@ -25,7 +25,7 @@
         border: 1px solid rgba(255, 255, 255, 0.06);
         color: #e8e8f0;
         font-size: 14px;
-        height: 80px;
+        height: 90px;
         -webkit-app-region: drag;
       }
       .indicator {
@@ -63,6 +63,26 @@
         font-size: 16px;
         font-weight: 600;
       }
+      .details {
+        font-size: 11px;
+        color: #888;
+        margin-top: 2px;
+      }
+      .input-status {
+        display: flex;
+        gap: 8px;
+        font-size: 10px;
+        margin-top: 2px;
+      }
+      .input-badge {
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .input-badge.active {
+        background: rgba(255, 64, 96, 0.6);
+        color: #fff;
+      }
       .buttons {
         display: flex;
         gap: 6px;
@@ -94,6 +114,8 @@
       <div class="info">
         <div class="status ready" id="status">READY</div>
         <div class="duration" id="duration">00:00</div>
+        <div class="details" id="details"></div>
+        <div class="input-status" id="inputStatus"></div>
       </div>
       <div class="buttons">
         <button class="btn btn-play" id="playBtn" style="display:none" title="Play Video">&#9654;</button>
@@ -106,6 +128,8 @@
       const indicator = document.getElementById('indicator');
       const statusEl = document.getElementById('status');
       const durationEl = document.getElementById('duration');
+      const detailsEl = document.getElementById('details');
+      const inputStatusEl = document.getElementById('inputStatus');
       const pauseBtn = document.getElementById('pauseBtn');
       const resumeBtn = document.getElementById('resumeBtn');
       const stopBtn = document.getElementById('stopBtn');
@@ -113,11 +137,14 @@
 
       let duration = 0;
       let lastVideoPath = '';
+      let currentResolution = null;
+      let currentFps = null;
+      let currentInputState = null;
 
       // Listen for status updates
       window.electronAPI.onRecordingStatus((status) => {
         console.log('Status update:', status);
-        updateUI(status.state, status.duration);
+        updateUI(status.state, status.duration, status.resolution, status.fps, status.inputState);
       });
 
       // Listen for recording finished
@@ -128,9 +155,14 @@
         playBtn.style.display = 'flex';
       });
 
-      function updateUI(state, dur) {
+      function updateUI(state, dur, resolution, fps, inputState) {
         duration = dur || 0;
+        currentResolution = resolution;
+        currentFps = fps;
+        currentInputState = inputState;
         updateDuration();
+        updateDetails();
+        updateInputStatus();
 
         indicator.className = 'indicator';
         statusEl.className = 'status';
@@ -151,6 +183,8 @@
         } else {
           statusEl.classList.add('ready');
           statusEl.textContent = 'READY';
+          detailsEl.textContent = '';
+          inputStatusEl.innerHTML = '';
         }
       }
 
@@ -159,6 +193,30 @@
         const minutes = Math.floor(seconds / 60);
         const secs = seconds % 60;
         durationEl.textContent = minutes.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
+      }
+
+      function updateDetails() {
+        if (currentResolution && currentFps) {
+          detailsEl.textContent = `${currentResolution.width}x${currentResolution.height} @ ${currentFps}fps`;
+        } else {
+          detailsEl.textContent = '';
+        }
+      }
+
+      function updateInputStatus() {
+        if (!currentInputState || currentInputState.pressedKeyCount === 0 && !currentInputState.mouseButtonPressed) {
+          inputStatusEl.innerHTML = '';
+          return;
+        }
+
+        let html = '';
+        if (currentInputState.pressedKeyCount > 0) {
+          html += `<span class="input-badge active">KEY: ${currentInputState.pressedKeyCount}</span>`;
+        }
+        if (currentInputState.mouseButtonPressed) {
+          html += `<span class="input-badge active">MOUSE</span>`;
+        }
+        inputStatusEl.innerHTML = html;
       }
 
       pauseBtn.onclick = () => window.electronAPI.pauseRecording();
