@@ -360,6 +360,7 @@ public:
         obsConfig.remuxToMp4 = config.remuxToMp4;
         obsConfig.captureAudio = config.captureAudio;
         obsConfig.captureMicrophone = config.captureMicrophone;
+        obsConfig.microphoneDevice = config.microphoneDevice;
 
         Recorder* recorder = getRecorder();
         if (!recorder || !recorder->startRecording(obsConfig)) {

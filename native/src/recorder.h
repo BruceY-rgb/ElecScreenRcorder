@@ -158,6 +158,9 @@ private:
     // Start FFmpeg process
     bool startFFmpeg(const std::string& command);
 
+    // Wait for FFmpeg to actually start recording by parsing stderr
+    bool waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs);
+
     // Send commands to FFmpeg
     void sendToFFmpeg(const char* cmd, size_t len);
 };

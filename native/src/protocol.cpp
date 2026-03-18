@@ -123,6 +123,9 @@ std::optional<Command> parseCommand(const std::string& input) {
         if (config.contains("captureMicrophone") && config["captureMicrophone"].is_boolean()) {
             cmd.config.captureMicrophone = config["captureMicrophone"].get<bool>();
         }
+        if (config.contains("microphoneDevice") && config["microphoneDevice"].is_string()) {
+            cmd.config.microphoneDevice = config["microphoneDevice"].get<std::string>();
+        }
     }
 
     return cmd;

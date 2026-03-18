@@ -47,8 +47,15 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
     remuxToMp4: false,
     captureAudio: true,
     captureMicrophone: false,
+    microphoneDevice: '外部麦克风 (Realtek(R) Audio)',
     organizeByTimestamp: true,
   });
+
+  // 可用的麦克风设备列表
+  const microphoneOptions = [
+    { value: '外部麦克风 (Realtek(R) Audio)', label: '外部麦克风 (Realtek(R) Audio)' },
+    { value: '麦克风阵列 (适用于数字麦克风的英特尔® 智音技术)', label: '麦克风阵列 (英特尔® 智音技术)' },
+  ];
 
   const [savePath, setSavePath] = useState('');
   const [setAsDefault, setSetAsDefault] = useState(false);
@@ -405,6 +412,22 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
               />
               Microphone
             </label>
+
+            {/* 麦克风设备选择 - 当启用麦克风时显示 */}
+            {config.captureMicrophone && (
+              <div className="setting-row" style={{ marginLeft: '20px', marginTop: '8px' }}>
+                <span className="setting-label">Microphone Device</span>
+                <select
+                  className="setting-select"
+                  value={config.microphoneDevice || microphoneOptions[0].value}
+                  onChange={(e) => setConfig({ ...config, microphoneDevice: e.target.value })}
+                >
+                  {microphoneOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <label className="setting-checkbox">
               <input

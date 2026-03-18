@@ -27,6 +27,7 @@ export interface RecordingConfig {
   remuxToMp4: boolean;
   captureAudio?: boolean;
   captureMicrophone?: boolean;
+  microphoneDevice?: string;  // 麦克风设备名称
   // 新增：是否将文件整理到时间戳文件夹
   organizeByTimestamp?: boolean;
 }
@@ -341,6 +342,7 @@ export class RecorderService {
         remuxToMp4: config.remuxToMp4,
         captureAudio: config.captureAudio ?? true,
         captureMicrophone: config.captureMicrophone ?? false,
+        microphoneDevice: config.microphoneDevice,
       },
     };
 

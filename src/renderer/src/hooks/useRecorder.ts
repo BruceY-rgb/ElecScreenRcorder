@@ -9,6 +9,7 @@ export interface RecordingConfig {
   remuxToMp4: boolean;
   captureAudio?: boolean;
   captureMicrophone?: boolean;
+  microphoneDevice?: string;  // 麦克风设备名称
   organizeByTimestamp?: boolean;
 }
 

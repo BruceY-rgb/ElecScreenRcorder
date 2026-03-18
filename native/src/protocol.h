@@ -43,6 +43,7 @@ struct StartConfig {
     bool remuxToMp4 = false;         // Convert to MP4 after recording
     bool captureAudio = true;        // Capture system audio
     bool captureMicrophone = false;  // Capture microphone
+    std::string microphoneDevice;   // Microphone device name
 };
 
 /**

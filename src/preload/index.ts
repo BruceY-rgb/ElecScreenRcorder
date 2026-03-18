@@ -7,6 +7,9 @@ export interface RecordingConfig {
   savePath: string;
   separateAudio: boolean;
   remuxToMp4: boolean;
+  captureAudio?: boolean;
+  captureMicrophone?: boolean;
+  microphoneDevice?: string;
   organizeByTimestamp?: boolean;
 }
 

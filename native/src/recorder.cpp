@@ -125,6 +125,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 
     // Global options
     cmd << " -y";  // Overwrite output
+    // Increase real-time buffer for smoother capture
+    cmd << " -rtbufsize 100M";
 
     // ===== INPUTS FIRST =====
     // Video input - Windows screen capture using GDI
@@ -135,6 +137,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     cmd << " -video_size " << config.width << "x" << config.height;
     cmd << " -i desktop";
     cmd << " -use_wallclock_as_timestamps 0";
+    // Generate PTS for video to match audio
+    cmd << " -fflags +genpts";
 
     // Count audio inputs
     int audioInputCount = 0;
@@ -148,6 +152,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 
     // Microphone input (if enabled) - use dshow
     if (config.captureMicrophone) {
+        // Add thread_queue_size to prevent audio input blocking
+        cmd << " -thread_queue_size 512";
         cmd << " -f dshow -i audio=\"";
         if (!config.microphoneDevice.empty()) {
             cmd << config.microphoneDevice;
@@ -189,6 +195,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     if (audioInputCount > 0) {
         cmd << " -c:a aac";
         cmd << " -b:a " << config.audioBitrate << "k";
+        // Use multiple threads for audio encoding to reduce CPU load
+        cmd << " -threads 2";
     }
 
     // Map inputs based on configuration
