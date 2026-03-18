@@ -63,8 +63,8 @@ bool Recorder::initialize(const std::wstring& modulePath) {
     // Set FFmpeg path from module path
     std::wstring ffmpegW = modulePath;
     if (ffmpegW.empty()) {
-        // Try default path
-        ffmpegW = L".\\dist";
+        // Try default path (user's custom FFmpeg installation)
+        ffmpegW = L"D:\\ffmpeg\\ffmpeg-master-latest-win64-gpl\\bin";
     }
 
     // Find ffmpeg.exe
@@ -139,11 +139,12 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     // Count audio inputs
     int audioInputCount = 0;
 
-    // System audio input (if enabled) - use WASAPI
-    if (config.captureAudio) {
-        cmd << " -f wasapi -i \"audio=Speakers\"";
-        audioInputCount++;
-    }
+    // System audio input - DISABLED (no virtual audio device available)
+    // To enable: install VB-Audio Virtual Cable and use "audio=CABLE Input (VB-Audio Virtual Cable)"
+    // if (config.captureAudio) {
+    //     cmd << " -f dshow -i audio=\"CABLE Input (VB-Audio Virtual Cable)\"";
+    //     audioInputCount++;
+    // }
 
     // Microphone input (if enabled) - use dshow
     if (config.captureMicrophone) {
@@ -151,7 +152,7 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
         if (!config.microphoneDevice.empty()) {
             cmd << config.microphoneDevice;
         } else {
-            cmd << "virtual-audio-capturer";
+            cmd << "外部麦克风 (Realtek(R) Audio)";
         }
         cmd << "\"";
         audioInputCount++;
@@ -217,10 +218,86 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     return cmd.str();
 }
 
+bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
+    const auto startTime = std::chrono::steady_clock::now();
+    std::string buffer;
+
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime
+        ).count();
+
+        if (elapsed > timeoutMs) {
+            writeNativeLog(("F_TIMEOUT: No ready signal after " + std::to_string(timeoutMs) + "ms").c_str());
+            return false;
+        }
+
+        DWORD bytesAvailable = 0;
+        if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+            char tempBuf[4096];
+            DWORD bytesRead = 0;
+            DWORD toRead = bytesAvailable < sizeof(tempBuf) ? bytesAvailable : sizeof(tempBuf);
+
+            if (ReadFile(hStderrRead, tempBuf, toRead, &bytesRead, NULL) && bytesRead > 0) {
+                buffer.append(tempBuf, bytesRead);
+
+                // Log what FFmpeg is saying (for debugging)
+                std::string chunk(tempBuf, bytesRead);
+                writeNativeLog(("F_STDERR: " + chunk).c_str());
+
+                // Success: FFmpeg is ready to record
+                if (buffer.find("Press [q] to stop") != std::string::npos ||
+                    buffer.find("frame=") != std::string::npos) {
+                    return true;
+                }
+
+                // Failure: FFmpeg encountered an error
+                if (buffer.find("Error opening input") != std::string::npos ||
+                    buffer.find("Unknown input format") != std::string::npos ||
+                    buffer.find("Cannot open") != std::string::npos ||
+                    buffer.find("No such file or directory") != std::string::npos ||
+                    buffer.find("Immediate exit requested") != std::string::npos) {
+                    writeNativeLog("F_ERROR: FFmpeg reported an error in stderr");
+                    return false;
+                }
+            }
+        } else {
+            // No data available - check if process exited
+            DWORD exitCode;
+            if (GetExitCodeProcess(ffmpegProcess_.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+                // Read any remaining output
+                if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+                    char tempBuf[4096];
+                    DWORD bytesRead = 0;
+                    DWORD toRead = bytesAvailable < sizeof(tempBuf) ? bytesAvailable : sizeof(tempBuf);
+                    if (ReadFile(hStderrRead, tempBuf, toRead, &bytesRead, NULL) && bytesRead > 0) {
+                        writeNativeLog(("F_STDERR(final): " + std::string(tempBuf, bytesRead)).c_str());
+                    }
+                }
+                writeNativeLog(("F_ERROR: FFmpeg exited with code " + std::to_string(exitCode)).c_str());
+                return false;
+            }
+        }
+
+        Sleep(50);
+    }
+}
+
 bool Recorder::startFFmpeg(const std::string& command) {
     writeNativeLog("F1: startFFmpeg() called, creating process...");
 
-    std::cerr << "[RECORDER] startFFmpeg: BEGIN" << std::endl;
+    // Create pipe to capture FFmpeg stderr
+    HANDLE hStderrRead = NULL;
+    HANDLE hStderrWrite = NULL;
+    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
+
+    if (!CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        writeNativeLog("F_ERROR: Failed to create stderr pipe");
+        return false;
+    }
+
+    // Ensure the read end is not inherited by the child process
+    SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
     STARTUPINFOA si = {};
     PROCESS_INFORMATION pi = {};
@@ -228,45 +305,48 @@ bool Recorder::startFFmpeg(const std::string& command) {
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-
-    // Don't redirect stderr - let it go to console for debugging
-    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    si.hStdOutput = hStderrWrite;  // Redirect stdout to pipe
+    si.hStdError = hStderrWrite;   // Redirect stderr to pipe
 
     char* cmdLine = _strdup(command.c_str());
-    std::cerr << "[RECORDER] startFFmpeg: CreateProcess with command: " << command << std::endl;
+    writeNativeLog(("F2: Creating FFmpeg process: " + command).c_str());
 
     if (!CreateProcessA(nullptr, cmdLine, nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         DWORD err = GetLastError();
-        std::cerr << "[RECORDER] startFFmpeg: CreateProcess failed: " << err << std::endl;
+        writeNativeLog(("F_ERROR: CreateProcess failed, error=" + std::to_string(err)).c_str());
         free(cmdLine);
+        CloseHandle(hStderrRead);
+        CloseHandle(hStderrWrite);
         return false;
     }
 
     free(cmdLine);
+    CloseHandle(hStderrWrite);  // Close write end - only child uses it
     ffmpegProcess_ = pi;
 
-    writeNativeLog((std::string("F2: FFmpeg process created, PID: ") + std::to_string(pi.dwProcessId)).c_str());
-    std::cerr << "[RECORDER] startFFmpeg: FFmpeg process created (PID: " << pi.dwProcessId << ")" << std::endl;
+    writeNativeLog(("F3: FFmpeg process created, PID: " + std::to_string(pi.dwProcessId)).c_str());
+    writeNativeLog("F4: Waiting for FFmpeg to start recording...");
 
-    writeNativeLog("F3: Sleeping 500ms for FFmpeg initialization...");
-    // Give FFmpeg time to start and output any errors
-    Sleep(500);
-    writeNativeLog("F4: Sleep done, verifying process...");
+    bool ready = waitForFFmpegReady(hStderrRead, 3000);
 
-    // Check if FFmpeg is still running or exited with error
-    DWORD exitCode;
-    if (GetExitCodeProcess(pi.hProcess, &exitCode)) {
-        std::cerr << "[RECORDER] startFFmpeg: FFmpeg exitCode=" << exitCode << " (STILL_ACTIVE=" << STILL_ACTIVE << ")" << std::endl;
-        // If process has already exited (not STILL_ACTIVE), it means FFmpeg failed immediately
-        if (exitCode != STILL_ACTIVE) {
-            std::cerr << "[RECORDER] startFFmpeg: FFmpeg exited early with error code " << exitCode << std::endl;
-            return false;
+    CloseHandle(hStderrRead);
+
+    if (!ready) {
+        DWORD exitCode;
+        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+            writeNativeLog("F_ERROR: FFmpeg exited early");
+        } else {
+            writeNativeLog("F_WARN: FFmpeg timeout, process still running - terminating");
+            TerminateProcess(pi.hProcess, 1);
         }
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+        return false;
     }
 
-    writeNativeLog("F5: FFmpeg is running, recording active");
+    writeNativeLog("F5: FFmpeg is recording!");
     return true;
 }
 
@@ -328,9 +408,6 @@ bool Recorder::startRecording(const RecordingConfig& config) {
         std::cerr << "[RECORDER] startRecording: startFFmpeg failed" << std::endl;
         return false;
     }
-
-    // Give FFmpeg time to start capturing
-    Sleep(500);
 
     state_ = RecordingState::RECORDING;
     totalPausedDuration_ = 0;
