@@ -47,6 +47,8 @@ yarn-error.log*
 # Project-specific (do not commit)
 .claude/
 .trellis/
+!docs/plan.md
+!docs/product-design.md
 docs/
 AGENTS.md
 CLAUDE.md
