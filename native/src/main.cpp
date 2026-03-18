@@ -447,7 +447,10 @@ public:
         // Pause CSV writer
         pauseCsvWriter();
 
-        // Pause OBS recording
+        // Stop input capture - prevent events from being recorded during pause
+        stopInputCapture();
+
+        // Pause OBS/FFmpeg recording (sends 'p' command to FFmpeg stdin)
         Recorder* recorder = getRecorder();
         if (recorder) {
             recorder->pauseRecording();
@@ -470,7 +473,10 @@ public:
         // Resume CSV writer
         resumeCsvWriter();
 
-        // Resume OBS recording
+        // Restart input capture to resume recording events
+        startInputCapture();
+
+        // Resume OBS/FFmpeg recording
         Recorder* recorder = getRecorder();
         if (recorder) {
             recorder->resumeRecording();

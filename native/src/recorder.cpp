@@ -502,6 +502,15 @@ void Recorder::stopRecording() {
 
 void Recorder::pauseRecording() {
     if (state_ != RecordingState::RECORDING) return;
+
+    // Send pause command to FFmpeg
+    if (ffmpegStdin_) {
+        const char pauseCmd = 'p';
+        DWORD bytesWritten = 0;
+        WriteFile(ffmpegStdin_, &pauseCmd, 1, &bytesWritten, NULL);
+        FlushFileBuffers(ffmpegStdin_);
+    }
+
     pauseBeginTime_ = getHighPrecisionTimestamp();
     state_ = RecordingState::PAUSED;
     std::cout << "[RECORDER] Recording paused" << std::endl;
@@ -509,6 +518,15 @@ void Recorder::pauseRecording() {
 
 void Recorder::resumeRecording() {
     if (state_ != RecordingState::PAUSED) return;
+
+    // Send resume command to FFmpeg
+    if (ffmpegStdin_) {
+        const char resumeCmd = 'p';
+        DWORD bytesWritten = 0;
+        WriteFile(ffmpegStdin_, &resumeCmd, 1, &bytesWritten, NULL);
+        FlushFileBuffers(ffmpegStdin_);
+    }
+
     totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
     state_ = RecordingState::RECORDING;
     std::cout << "[RECORDER] Recording resumed" << std::endl;
