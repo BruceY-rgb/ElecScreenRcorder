@@ -38,6 +38,7 @@ export interface RecordingStatus {
   frameCount: number;
   resolution?: { width: number; height: number };
   fps?: number;
+  mouseActivity?: number;
   inputState?: {
     anyKeyPressed: boolean;
     mouseButtonPressed: boolean;
@@ -148,6 +149,7 @@ export class RecorderService {
   private recordingStartTime: number = 0;
   private duration: number = 0;
   private frameCount: number = 0;
+  private mouseActivity: number = 0;
 
   // Heartbeat tracking
   private lastHeartbeat: number = 0;
@@ -217,10 +219,14 @@ export class RecorderService {
   private sendCommand(command: object): void {
     const json = JSON.stringify(command) + '\n';
 
-    if (this.config.mode === 'local' && this.child?.stdin) {
-      this.child.stdin.write(json);
-    } else if (this.config.mode === 'remote' && this.socket) {
-      this.socket.write(json);
+    try {
+      if (this.config.mode === 'local' && this.child?.stdin) {
+        this.child.stdin.write(json);
+      } else if (this.config.mode === 'remote' && this.socket) {
+        this.socket.write(json);
+      }
+    } catch (err) {
+      // Ignore write errors during shutdown (EPIPE, ECONNRESET, etc.)
     }
   }
 
@@ -381,6 +387,7 @@ export class RecorderService {
     this.stopHeartbeat();
     this.stopStatusBroadcast();
     this.currentConfig = null;
+    this.mouseActivity = 0;
     this.log('INFO', 'Recording stopped');
     this.broadcastStatus();
 
@@ -405,7 +412,10 @@ export class RecorderService {
       throw new Error(`Cannot pause: state is ${this.state}`);
     }
 
+    console.log('[DEBUG RecorderService] Sending PAUSE command to native core...');
+    const cmdStart = Date.now();
     await this.sendCommandWithResponse('status', { action: 'pause' }, 5000);
+    console.log(`[DEBUG RecorderService] PAUSE command response received (took ${Date.now() - cmdStart}ms)`);
     this.state = 'paused';
     this.duration = Date.now() - this.recordingStartTime;
     this.pausedAt = Date.now();
@@ -419,7 +429,10 @@ export class RecorderService {
       throw new Error(`Cannot resume: state is ${this.state}`);
     }
 
+    console.log('[DEBUG RecorderService] Sending RESUME command to native core...');
+    const cmdStart = Date.now();
     await this.sendCommandWithResponse('status', { action: 'resume' }, 5000);
+    console.log(`[DEBUG RecorderService] RESUME command response received (took ${Date.now() - cmdStart}ms)`);
     this.state = 'recording';
     // Adjust start time to exclude paused duration
     this.recordingStartTime += Date.now() - this.pausedAt;
@@ -477,6 +490,7 @@ export class RecorderService {
     this.child = spawn(this.config.nativeCorePath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      env: { ...process.env }, // Inherit modified PATH from main process
     });
 
     // Setup stdout listener
@@ -645,7 +659,7 @@ export class RecorderService {
     return new Promise((resolve) => {
       const proc = spawn(ffmpegPath, [
         '-y', '-i', mkvPath, '-c', 'copy', mp4Path,
-      ], { windowsHide: true });
+      ], { windowsHide: true, env: { ...process.env } });
 
       let stderr = '';
       proc.stderr?.on('data', (data) => {
@@ -790,7 +804,14 @@ export class RecorderService {
       this.handleProcessExit(null, 'heartbeat-timeout');
     } else {
       // Send a lightweight command to check connection is alive
-      this.sendCommand({ action: 'check_input' });
+      // Only send if connection is still valid
+      const isConnected = this.config.mode === 'local'
+        ? (this.child !== null && !this.child.killed)
+        : (this.socket !== null && !this.socket.destroyed);
+
+      if (isConnected) {
+        this.sendCommand({ action: 'check_input' });
+      }
     }
   }
 
@@ -844,6 +865,9 @@ export class RecorderService {
         case 'input_state':
           // Handled by pending request above (heartbeat ping responses land here too)
           break;
+        case 'mouse_activity':
+          this.broadcastMouseActivity(msg.eventsPerSecond);
+          break;
       }
     } catch {
       // Ignore parse errors
@@ -863,6 +887,7 @@ export class RecorderService {
       frameCount: this.frameCount,
       resolution: this.currentConfig?.resolution,
       fps: this.currentConfig?.fps,
+      mouseActivity: this.mouseActivity,
     };
 
     if (inputState) {
@@ -891,6 +916,12 @@ export class RecorderService {
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('recording-error', error);
     });
+  }
+
+  private broadcastMouseActivity(eventsPerSecond: number): void {
+    this.mouseActivity = eventsPerSecond;
+    // Include mouseActivity in the status broadcast
+    this.broadcastStatus();
   }
 
   private broadcastFinish(data: any): void {

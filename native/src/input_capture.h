@@ -123,3 +123,9 @@ int64_t getHighPrecisionTimestamp();
  */
 struct InputState;
 InputState getCurrentInputState();
+
+/**
+ * Get approximate mouse move queue size
+ * Used for reporting mouse activity rate
+ */
+int getMouseMoveQueueSize();

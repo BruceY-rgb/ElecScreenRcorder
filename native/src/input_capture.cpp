@@ -121,6 +121,9 @@ static int g_lastMouseX = 0;
 static int g_lastMouseY = 0;
 static bool g_lastMouseInitialized = false;
 
+// Mouse move event counter for activity tracking
+static std::atomic<int64_t> g_mouseMoveCounter{0};
+
 // Pause tracking
 static std::atomic<int64_t> g_recordingStartTime{0};
 static std::atomic<int64_t> g_totalPausedDuration{0};
@@ -471,6 +474,7 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
 
                     if (g_mouseMoveQueue) {
                         g_mouseMoveQueue->enqueue(evt);
+                        g_mouseMoveCounter.fetch_add(1, std::memory_order_relaxed);
                     }
 
                     lastX = pos.x;
@@ -494,6 +498,7 @@ bool startInputCapture() {
 
     g_capturing.store(true);
     g_lastMouseInitialized = false;
+    g_mouseMoveCounter.store(0, std::memory_order_relaxed);
 
     // Start mouse polling thread
     g_pollThread = CreateThread(NULL, 0, MousePollThreadProc, NULL, 0, NULL);
@@ -548,4 +553,9 @@ void resetPauseTracking() {
     g_totalPausedDuration.store(0);
     g_pauseBeginTime.store(0);
     g_isPaused.store(false);
+}
+
+// Get mouse move counter value (total events since recording start)
+int getMouseMoveQueueSize() {
+    return static_cast<int>(g_mouseMoveCounter.load(std::memory_order_relaxed));
 }

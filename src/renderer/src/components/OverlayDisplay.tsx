@@ -52,6 +52,11 @@ function OverlayDisplay() {
         <div className="overlay-duration">
           {formatDuration(status.duration)}
         </div>
+        {(isRecording || isPaused) && (
+          <div className="overlay-mouse">
+            {status.mouseActivity || 0} ev/s
+          </div>
+        )}
       </div>
       <div className="overlay-buttons">
         {isRecording && (

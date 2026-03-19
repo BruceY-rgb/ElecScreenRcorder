@@ -25,7 +25,12 @@ function writeTimelineLog(message: string): void {
 // Simple preference storage
 const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
 
-function loadPreferences(): { defaultSavePath: string } {
+interface Preferences {
+  defaultSavePath: string;
+  autoCollapseOverlay?: boolean;
+}
+
+function loadPreferences(): Preferences {
   try {
     if (fs.existsSync(prefsPath)) {
       return JSON.parse(fs.readFileSync(prefsPath, 'utf-8'));
@@ -36,7 +41,7 @@ function loadPreferences(): { defaultSavePath: string } {
   return { defaultSavePath: '' };
 }
 
-function savePreferences(prefs: { defaultSavePath: string }): void {
+function savePreferences(prefs: Preferences): void {
   try {
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
   } catch (e) {
@@ -66,6 +71,31 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     const prefs = loadPreferences();
     prefs.defaultSavePath = savePath;
     savePreferences(prefs);
+  });
+
+  // Get preferences
+  ipcMain.handle('preferences:get', async (): Promise<Preferences> => {
+    return loadPreferences();
+  });
+
+  // Set preferences
+  ipcMain.handle('preferences:set', async (_, prefs: Partial<Preferences>): Promise<void> => {
+    const current = loadPreferences();
+    savePreferences({ ...current, ...prefs });
+  });
+
+  // Overlay mode control (expanded/collapsed)
+  ipcMain.handle('overlay:setMode', async (_, mode: 'expanded' | 'collapsed'): Promise<void> => {
+    const windows = getWindows();
+    if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+      if (mode === 'collapsed') {
+        windows.overlayWindow.setSize(50, 50);
+      } else {
+        windows.overlayWindow.setSize(300, 90);
+      }
+      // Notify overlay of mode change
+      windows.overlayWindow.webContents.send('overlay:mode', { mode });
+    }
   });
 
   // Open video file in default player, ensuring it appears on top
@@ -105,6 +135,15 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     // Show overlay after recording started
     writeTimelineLog('T5: Showing overlay window...');
     if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+      // Check if auto-collapse is enabled
+      const prefs = loadPreferences();
+      if (prefs.autoCollapseOverlay) {
+        windows.overlayWindow.setSize(50, 50);
+        windows.overlayWindow.webContents.send('overlay:mode', { mode: 'collapsed' });
+      } else {
+        windows.overlayWindow.setSize(300, 90);
+        windows.overlayWindow.webContents.send('overlay:mode', { mode: 'expanded' });
+      }
       windows.overlayWindow.showInactive();
     }
     writeTimelineLog('T6: Overlay window shown');

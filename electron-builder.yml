@@ -3,7 +3,7 @@ productName: Screen Recording Tool
 copyright: Copyright © 2024
 
 directories:
-  output: release
+  output: release-portable
   buildResources: build
 
 files:
@@ -15,19 +15,21 @@ extraResources:
     to: native/dist
     filter:
       - "**/*"
+  - from: build/README.txt
+    to: README.txt
+  - from: build/vc_redist.x64.exe
+    to: vc_redist.x64.exe
 
 win:
   target:
     - target: nsis
       arch:
         - x64
-  artifactName: ${productName}-${version}-Setup.${ext}
-
-nsis:
-  oneClick: false
-  perMachine: false
-  allowToChangeInstallationDirectory: true
-  deleteAppDataOnUninstall: false
+    - target: dir
+      arch:
+        - x64
+  signAndEditExecutable: false
+  artifactName: "${productName} Setup.${ext}"
 
 mac:
   target:

@@ -385,13 +385,6 @@ bool Recorder::startFFmpeg(const std::string& command) {
     return true;
 }
 
-void Recorder::sendToFFmpeg(const char* cmd, size_t len) {
-    // This would be used for interactive FFmpeg control via pipe
-    // For now we just use simple process management
-    (void)cmd;
-    (void)len;
-}
-
 bool Recorder::startRecording(const RecordingConfig& config) {
     writeNativeLog("N1: startRecording() called");
 
@@ -413,11 +406,20 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     config_ = config;
     outputPath_ = config.savePath;
 
+    // Initialize segment tracking
+    finalOutputPath_ = config.savePath;
+    segmentCounter_ = 0;
+    segmentPaths_.clear();
+    currentSegmentPath_ = generateSegmentPath();
+
     std::cerr << "[RECORDER] startRecording: outputPath=" << outputPath_ << std::endl;
+    std::cerr << "[RECORDER] startRecording: segment=" << currentSegmentPath_ << std::endl;
     std::cerr << "[RECORDER] startRecording: width=" << config.width << " height=" << config.height << " fps=" << config.fps << std::endl;
 
-    // Build and start FFmpeg command
-    std::string command = buildFFmpegCommand(config);
+    // Build FFmpeg command using segment path instead of final path
+    RecordingConfig segConfig = config;
+    segConfig.savePath = currentSegmentPath_;
+    std::string command = buildFFmpegCommand(segConfig);
     std::cerr << "[RECORDER] startRecording: FFmpeg command: " << command << std::endl;
 
     writeNativeLog("N2: Calling startFFmpeg()...");
@@ -431,10 +433,13 @@ bool Recorder::startRecording(const RecordingConfig& config) {
         RecordingConfig noAudioConfig = config;
         noAudioConfig.captureAudio = false;
         noAudioConfig.captureMicrophone = false;
+        noAudioConfig.savePath = currentSegmentPath_;
         command = buildFFmpegCommand(noAudioConfig);
         std::cerr << "[RECORDER] startRecording: Retry FFmpeg command: " << command << std::endl;
         started = startFFmpeg(command);
         if (started) {
+            config_ = noAudioConfig;
+            config_.savePath = finalOutputPath_;  // Keep original final path in config_
             std::cerr << "[RECORDER] startRecording: Recording started successfully (without audio)" << std::endl;
         }
     }
@@ -455,42 +460,41 @@ bool Recorder::startRecording(const RecordingConfig& config) {
 void Recorder::stopRecording() {
     if (state_ == RecordingState::IDLE) return;
 
-    writeNativeLog("S1: stopRecording() called, sending quit to FFmpeg...");
+    writeNativeLog("S1: stopRecording() called");
 
-    // Send quit command to FFmpeg for graceful shutdown
-    if (ffmpegProcess_.hProcess && ffmpegStdin_) {
-        // Send 'q' to FFmpeg stdin to request graceful shutdown
-        const char quitCmd = 'q';
-        DWORD bytesWritten = 0;
-        WriteFile(ffmpegStdin_, &quitCmd, 1, &bytesWritten, NULL);
-        FlushFileBuffers(ffmpegStdin_);
-        CloseHandle(ffmpegStdin_);
-        ffmpegStdin_ = nullptr;
-        writeNativeLog("S2: Sent 'q' to FFmpeg, waiting for graceful exit...");
+    // If FFmpeg is currently running (RECORDING state), stop it and save the last segment
+    if (state_ == RecordingState::RECORDING && ffmpegProcess_.hProcess) {
+        stopFFmpegGracefully();
+        segmentPaths_.push_back(currentSegmentPath_);
+        writeNativeLog(("S2: Saved final segment: " + currentSegmentPath_).c_str());
+    }
+    // If PAUSED, FFmpeg is already stopped and segment already saved in pauseRecording()
 
-        // Wait for FFmpeg to exit gracefully (max 10 seconds)
-        const DWORD maxWaitMs = 10000;
-        DWORD waitResult = WaitForSingleObject(ffmpegProcess_.hProcess, maxWaitMs);
-
-        if (waitResult == WAIT_TIMEOUT) {
-            writeNativeLog("S3: FFmpeg did not exit gracefully, forcing termination");
-            // Force terminate if still running after timeout
-            TerminateProcess(ffmpegProcess_.hProcess, 0);
+    // Handle segment concatenation
+    if (segmentPaths_.size() > 1) {
+        writeNativeLog(("S3: Concatenating " + std::to_string(segmentPaths_.size()) + " segments").c_str());
+        if (concatenateSegments()) {
+            writeNativeLog("S4: Concatenation successful, cleaning up segments");
+            cleanupSegmentFiles();
         } else {
-            writeNativeLog("S3: FFmpeg exited gracefully");
+            writeNativeLog("S4: Concatenation FAILED, keeping segment files");
+            // Fallback: rename first segment as the output
+            if (!segmentPaths_.empty()) {
+                std::rename(segmentPaths_[0].c_str(), finalOutputPath_.c_str());
+                writeNativeLog("S4: Fallback - renamed first segment to final output");
+            }
         }
-    } else if (ffmpegProcess_.hProcess) {
-        // Fallback: just terminate if no stdin handle
-        writeNativeLog("S2: No stdin handle, forcing termination");
-        TerminateProcess(ffmpegProcess_.hProcess, 0);
+    } else if (segmentPaths_.size() == 1) {
+        // Single segment: just rename to final output path
+        writeNativeLog("S3: Single segment, renaming to final output");
+        std::rename(segmentPaths_[0].c_str(), finalOutputPath_.c_str());
     }
 
-    // Clean up process handles
-    if (ffmpegProcess_.hProcess) {
-        CloseHandle(ffmpegProcess_.hProcess);
-        CloseHandle(ffmpegProcess_.hThread);
-        memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
-    }
+    // Reset segment state
+    segmentPaths_.clear();
+    currentSegmentPath_.clear();
+    segmentCounter_ = 0;
+    finalOutputPath_.clear();
 
     state_ = RecordingState::IDLE;
     std::cout << "[RECORDER] Recording stopped" << std::endl;
@@ -501,35 +505,81 @@ void Recorder::stopRecording() {
 }
 
 void Recorder::pauseRecording() {
-    if (state_ != RecordingState::RECORDING) return;
+    std::cerr << "[RECORDER] pauseRecording() called, state=" << (int)state_ << std::endl;
 
-    // Send pause command to FFmpeg
-    if (ffmpegStdin_) {
-        const char pauseCmd = 'p';
-        DWORD bytesWritten = 0;
-        WriteFile(ffmpegStdin_, &pauseCmd, 1, &bytesWritten, NULL);
-        FlushFileBuffers(ffmpegStdin_);
+    if (state_ != RecordingState::RECORDING) {
+        std::cerr << "[RECORDER] pauseRecording() - NOT RECORDING, returning" << std::endl;
+        return;
     }
+
+    std::cerr << "[RECORDER] pauseRecording() - calling stopFFmpegGracefully()" << std::endl;
+    writeNativeLog("P1: pauseRecording() - stopping FFmpeg for current segment");
+
+    // Gracefully stop the current FFmpeg process
+    stopFFmpegGracefully();
+
+    std::cerr << "[RECORDER] pauseRecording() - stopFFmpegGracefully() returned" << std::endl;
+
+    // Save the completed segment path
+    std::cerr << "[RECORDER] pauseRecording() - pushing segment: " << currentSegmentPath_ << std::endl;
+    segmentPaths_.push_back(currentSegmentPath_);
+    writeNativeLog(("P2: Segment saved: " + currentSegmentPath_).c_str());
 
     pauseBeginTime_ = getHighPrecisionTimestamp();
     state_ = RecordingState::PAUSED;
-    std::cout << "[RECORDER] Recording paused" << std::endl;
+    std::cerr << "[RECORDER] pauseRecording() - DONE, state now PAUSED" << std::endl;
+    std::cout << "[RECORDER] Recording paused (segment " << segmentPaths_.size() << " saved)" << std::endl;
 }
 
 void Recorder::resumeRecording() {
-    if (state_ != RecordingState::PAUSED) return;
+    std::cerr << "[RECORDER] resumeRecording() called, state=" << (int)state_ << std::endl;
 
-    // Send resume command to FFmpeg
-    if (ffmpegStdin_) {
-        const char resumeCmd = 'p';
-        DWORD bytesWritten = 0;
-        WriteFile(ffmpegStdin_, &resumeCmd, 1, &bytesWritten, NULL);
-        FlushFileBuffers(ffmpegStdin_);
+    if (state_ != RecordingState::PAUSED) {
+        std::cerr << "[RECORDER] resumeRecording() - NOT PAUSED, returning" << std::endl;
+        return;
     }
 
+    std::cerr << "[RECORDER] resumeRecording() - generating new segment path" << std::endl;
+    writeNativeLog("R1: resumeRecording() - starting new segment");
+
+    // Generate new segment path
+    currentSegmentPath_ = generateSegmentPath();
+    std::cerr << "[RECORDER] resumeRecording() - new segment: " << currentSegmentPath_ << std::endl;
+    writeNativeLog(("R2: New segment path: " + currentSegmentPath_).c_str());
+
+    // Build FFmpeg command for the new segment
+    RecordingConfig segConfig = config_;
+    segConfig.savePath = currentSegmentPath_;
+    std::string command = buildFFmpegCommand(segConfig);
+
+    std::cerr << "[RECORDER] resumeRecording() - starting FFmpeg" << std::endl;
+    bool started = startFFmpeg(command);
+
+    // If failed and audio was enabled, retry without audio
+    if (!started && (config_.captureAudio || config_.captureMicrophone)) {
+        std::cerr << "[RECORDER] resumeRecording() - FFmpeg failed with audio, retrying without" << std::endl;
+        writeNativeLog("R3: FFmpeg failed with audio, retrying without audio");
+        RecordingConfig noAudioConfig = config_;
+        noAudioConfig.captureAudio = false;
+        noAudioConfig.captureMicrophone = false;
+        noAudioConfig.savePath = currentSegmentPath_;
+        command = buildFFmpegCommand(noAudioConfig);
+        started = startFFmpeg(command);
+    }
+
+    if (!started) {
+        std::cerr << "[RECORDER] resumeRecording() - FAILED to start FFmpeg" << std::endl;
+        writeNativeLog("R_ERROR: Failed to start new FFmpeg segment, staying PAUSED");
+        std::cerr << "[RECORDER] resumeRecording: Failed to start new segment" << std::endl;
+        // Stay in PAUSED state - don't change state
+        return;
+    }
+
+    std::cerr << "[RECORDER] resumeRecording() - FFmpeg started successfully" << std::endl;
     totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
     state_ = RecordingState::RECORDING;
-    std::cout << "[RECORDER] Recording resumed" << std::endl;
+    writeNativeLog("R4: New segment recording started");
+    std::cout << "[RECORDER] Recording resumed (segment " << (segmentPaths_.size() + 1) << ")" << std::endl;
 }
 
 void Recorder::shutdown() {
@@ -574,6 +624,183 @@ void Recorder::signal_stop(bool success) {
 
 bool Recorder::isFFmpegAvailable() const {
     return !ffmpegPath_.empty();
+}
+
+bool Recorder::stopFFmpegGracefully(int timeoutMs) {
+    std::cerr << "[RECORDER] stopFFmpegGracefully() called" << std::endl;
+    writeNativeLog("FFG1: stopFFmpegGracefully() called");
+
+    if (ffmpegProcess_.hProcess && ffmpegStdin_) {
+        std::cerr << "[RECORDER] stopFFmpegGracefully() - sending 'q' to FFmpeg stdin" << std::endl;
+        // Send 'q' to FFmpeg stdin to request graceful shutdown
+        const char quitCmd = 'q';
+        DWORD bytesWritten = 0;
+        WriteFile(ffmpegStdin_, &quitCmd, 1, &bytesWritten, NULL);
+        FlushFileBuffers(ffmpegStdin_);
+        CloseHandle(ffmpegStdin_);
+        ffmpegStdin_ = nullptr;
+        std::cerr << "[RECORDER] stopFFmpegGracefully() - waiting for FFmpeg to exit..." << std::endl;
+        writeNativeLog("FFG2: Sent 'q' to FFmpeg, waiting for graceful exit...");
+
+        DWORD waitResult = WaitForSingleObject(ffmpegProcess_.hProcess, (DWORD)timeoutMs);
+
+        if (waitResult == WAIT_TIMEOUT) {
+            std::cerr << "[RECORDER] stopFFmpegGracefully() - TIMEOUT, forcing termination" << std::endl;
+            writeNativeLog("FFG3: FFmpeg did not exit gracefully, forcing termination");
+            TerminateProcess(ffmpegProcess_.hProcess, 0);
+            WaitForSingleObject(ffmpegProcess_.hProcess, 3000);
+        } else {
+            std::cerr << "[RECORDER] stopFFmpegGracefully() - FFmpeg exited gracefully" << std::endl;
+            writeNativeLog("FFG3: FFmpeg exited gracefully");
+        }
+    } else if (ffmpegProcess_.hProcess) {
+        std::cerr << "[RECORDER] stopFFmpegGracefully() - no stdin handle, forcing termination" << std::endl;
+        writeNativeLog("FFG2: No stdin handle, forcing termination");
+        TerminateProcess(ffmpegProcess_.hProcess, 0);
+        WaitForSingleObject(ffmpegProcess_.hProcess, 3000);
+    } else {
+        std::cerr << "[RECORDER] stopFFmpegGracefully() - no FFmpeg process to stop" << std::endl;
+        writeNativeLog("FFG2: No FFmpeg process to stop");
+        return true;
+    }
+
+    // Clean up process handles
+    if (ffmpegProcess_.hProcess) {
+        std::cerr << "[RECORDER] stopFFmpegGracefully() - cleaning up process handles" << std::endl;
+        CloseHandle(ffmpegProcess_.hProcess);
+        CloseHandle(ffmpegProcess_.hThread);
+        memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+    }
+
+    writeNativeLog("FFG4: FFmpeg process cleaned up");
+    return true;
+}
+
+std::string Recorder::generateSegmentPath() {
+    segmentCounter_++;
+
+    std::cerr << "[RECORDER] generateSegmentPath() - finalOutputPath_='" << finalOutputPath_ << "'" << std::endl;
+
+    // Extract directory and base name from finalOutputPath_
+    std::string dir, baseName, ext;
+    size_t lastSlash = finalOutputPath_.rfind('\\');
+    if (lastSlash == std::string::npos) {
+        lastSlash = finalOutputPath_.rfind('/');
+    }
+
+    if (lastSlash != std::string::npos) {
+        dir = finalOutputPath_.substr(0, lastSlash + 1);
+        baseName = finalOutputPath_.substr(lastSlash + 1);
+    } else {
+        dir = "";
+        baseName = finalOutputPath_;
+    }
+
+    // Remove extension
+    size_t dotPos = baseName.rfind('.');
+    if (dotPos != std::string::npos) {
+        ext = baseName.substr(dotPos);
+        baseName = baseName.substr(0, dotPos);
+    } else {
+        ext = ".mkv";
+    }
+
+    // Generate segment path: recording_seg001.mkv, recording_seg002.mkv, etc.
+    char segNum[16];
+    snprintf(segNum, sizeof(segNum), "_seg%03d", segmentCounter_);
+
+    std::string segPath = dir + baseName + segNum + ext;
+    std::cerr << "[RECORDER] generateSegmentPath() - dir='" << dir << "' baseName='" << baseName << "' ext='" << ext << "' => segment=" << segPath << std::endl;
+    writeNativeLog(("Generated segment path: " + segPath).c_str());
+    return segPath;
+}
+
+bool Recorder::concatenateSegments() {
+    if (segmentPaths_.empty()) return false;
+
+    writeNativeLog(("CONCAT: Concatenating " + std::to_string(segmentPaths_.size()) + " segments").c_str());
+
+    // Write concat list file
+    std::string listPath = finalOutputPath_ + ".concat_list.txt";
+    {
+        std::ofstream listFile(listPath);
+        if (!listFile.is_open()) {
+            writeNativeLog("CONCAT_ERROR: Failed to create concat list file");
+            return false;
+        }
+        for (const auto& seg : segmentPaths_) {
+            // Use forward slashes and escape single quotes for ffmpeg concat
+            std::string escapedPath = seg;
+            // Replace backslashes with forward slashes
+            for (auto& c : escapedPath) {
+                if (c == '\\') c = '/';
+            }
+            listFile << "file '" << escapedPath << "'\n";
+        }
+        listFile.close();
+    }
+
+    // Build concat command
+    std::string concatCmd = "\"" + ffmpegPath_ + "\""
+        + " -y -f concat -safe 0"
+        + " -i \"" + listPath + "\""
+        + " -c copy"
+        + " \"" + finalOutputPath_ + "\"";
+
+    writeNativeLog(("CONCAT: Command: " + concatCmd).c_str());
+
+    // Execute concat synchronously
+    STARTUPINFOA si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    char* cmdLine = _strdup(concatCmd.c_str());
+    bool success = false;
+
+    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        // Wait for concat to finish (should be fast since -c copy)
+        DWORD waitResult = WaitForSingleObject(pi.hProcess, 60000);  // 60s timeout
+
+        if (waitResult == WAIT_TIMEOUT) {
+            writeNativeLog("CONCAT_ERROR: Concat process timed out");
+            TerminateProcess(pi.hProcess, 1);
+        } else {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            if (exitCode == 0) {
+                writeNativeLog("CONCAT: Success");
+                success = true;
+            } else {
+                writeNativeLog(("CONCAT_ERROR: FFmpeg exited with code " + std::to_string(exitCode)).c_str());
+            }
+        }
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    } else {
+        writeNativeLog(("CONCAT_ERROR: Failed to create process, error=" + std::to_string(GetLastError())).c_str());
+    }
+
+    free(cmdLine);
+
+    // Clean up list file
+    std::remove(listPath.c_str());
+
+    return success;
+}
+
+void Recorder::cleanupSegmentFiles() {
+    writeNativeLog(("CLEANUP: Removing " + std::to_string(segmentPaths_.size()) + " segment files").c_str());
+    for (const auto& seg : segmentPaths_) {
+        if (std::remove(seg.c_str()) == 0) {
+            writeNativeLog(("CLEANUP: Removed " + seg).c_str());
+        } else {
+            writeNativeLog(("CLEANUP_WARN: Failed to remove " + seg).c_str());
+        }
+    }
 }
 
 // Global functions

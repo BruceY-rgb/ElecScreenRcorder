@@ -10,13 +10,17 @@
         margin: 0;
         padding: 0;
       }
-      body {
+      html, body {
         background: #12121f;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         user-select: none;
         overflow: hidden;
+        height: 100%;
+        margin: 0;
+        padding: 0;
       }
       .overlay {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -27,6 +31,93 @@
         font-size: 14px;
         height: 90px;
         -webkit-app-region: drag;
+      }
+      .full-content {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        height: 100%;
+        -webkit-app-region: drag;
+      }
+      .full-content .buttons {
+        -webkit-app-region: no-drag;
+      }
+      /* Collapsed mode (floating ball) */
+      .overlay.collapsed {
+        height: 50px;
+        padding: 8px;
+        justify-content: center;
+        cursor: grab;
+        -webkit-app-region: drag;
+      }
+      .overlay.collapsed:active {
+        cursor: grabbing;
+      }
+      .overlay.collapsed:hover {
+        background: #1a1a2e;
+      }
+      .collapsed-content {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+      }
+      .overlay.collapsed .collapsed-content {
+        display: flex;
+      }
+      .overlay.collapsed .full-content {
+        display: none;
+      }
+      .collapsed-indicator {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #00d4aa 0%, #00a885 100%);
+        box-shadow: 0 2px 8px rgba(0, 212, 170, 0.4), 0 0 12px rgba(0, 212, 170, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .collapsed-indicator::after {
+        content: '';
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #fff;
+        opacity: 0.9;
+      }
+      .collapsed-indicator.recording {
+        background: linear-gradient(135deg, #ff4060 0%, #cc3350 100%);
+        box-shadow: 0 2px 12px rgba(255, 64, 96, 0.5), 0 0 20px rgba(255, 64, 96, 0.3);
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      .collapsed-indicator.recording::after {
+        background: #fff;
+        animation: recording-dot 1s ease-in-out infinite;
+      }
+      .collapsed-indicator.paused {
+        background: linear-gradient(135deg, #ffaa00 0%, #dd9900 100%);
+        box-shadow: 0 2px 8px rgba(255, 170, 0, 0.4), 0 0 12px rgba(255, 170, 0, 0.2);
+      }
+      .collapsed-indicator.paused::after {
+        background: #fff;
+        opacity: 0.7;
+      }
+      @keyframes recording-dot {
+        0%, 100% { transform: scale(1); opacity: 0.9; }
+        50% { transform: scale(0.8); opacity: 0.6; }
+      }
+      .collapsed-duration {
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 10px;
+        font-weight: 600;
+        color: #e8e8f0;
+        background: rgba(0, 0, 0, 0.3);
+        padding: 2px 6px;
+        border-radius: 10px;
+        margin-top: 2px;
       }
       .indicator {
         width: 12px;
@@ -48,6 +139,21 @@
       }
       .info {
         flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        min-width: 0;
+      }
+      .info-row-primary {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .info-row-secondary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
       .status {
         font-weight: 700;
@@ -66,13 +172,24 @@
       .details {
         font-size: 11px;
         color: #888;
-        margin-top: 2px;
+      }
+      .mouse-activity {
+        font-size: 11px;
+        color: #888;
       }
       .input-status {
+        position: absolute;
+        bottom: 2px;
+        left: 12px;
+        right: 12px;
         display: flex;
-        gap: 8px;
+        gap: 4px;
         font-size: 10px;
-        margin-top: 2px;
+        pointer-events: none;
+      }
+      .mouse-activity span {
+        color: #ff4060;
+        font-weight: 600;
       }
       .input-badge {
         padding: 1px 4px;
@@ -106,47 +223,126 @@
       .btn-resume { background: rgba(0, 212, 170, 0.8); }
       .btn-stop { background: rgba(255, 64, 96, 0.8); }
       .btn-play { background: rgba(0, 136, 255, 0.8); }
+      .btn-collapse { background: rgba(136, 136, 136, 0.6); }
+      .btn-collapse:hover { background: rgba(170, 170, 170, 0.8); }
+      .btn-expand {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: rgba(255, 64, 96, 0.8);
+        border: none;
+        cursor: pointer;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 16px;
+      }
+      .overlay.collapsed .btn-expand {
+        display: flex;
+      }
     </style>
   </head>
   <body>
-    <div class="overlay">
-      <div class="indicator" id="indicator"></div>
-      <div class="info">
-        <div class="status ready" id="status">READY</div>
-        <div class="duration" id="duration">00:00</div>
-        <div class="details" id="details"></div>
-        <div class="input-status" id="inputStatus"></div>
+    <div class="overlay" id="overlay">
+      <div class="collapsed-content">
+        <div class="collapsed-indicator" id="collapsedIndicator"></div>
+        <div class="collapsed-duration" id="collapsedDuration">00:00</div>
+        <button class="btn-expand" id="expandBtn" title="Expand">&#9660;</button>
       </div>
-      <div class="buttons">
-        <button class="btn btn-play" id="playBtn" style="display:none" title="Play Video">&#9654;</button>
-        <button class="btn btn-pause" id="pauseBtn" style="display:none">||</button>
-        <button class="btn btn-resume" id="resumeBtn" style="display:none">&#9654;</button>
-        <button class="btn btn-stop" id="stopBtn">&#9632;</button>
+      <div class="full-content">
+        <div class="indicator" id="indicator"></div>
+        <div class="info">
+          <div class="info-row-primary">
+            <span class="status ready" id="status">READY</span>
+            <span class="duration" id="duration">00:00</span>
+          </div>
+          <div class="info-row-secondary">
+            <span class="details" id="details"></span>
+            <span class="mouse-activity" id="mouseActivity"></span>
+          </div>
+        </div>
+        <div class="buttons">
+          <button class="btn btn-collapse" id="collapseBtn" title="Collapse to ball">&#9660;</button>
+          <button class="btn btn-play" id="playBtn" style="display:none" title="Play Video">&#9654;</button>
+          <button class="btn btn-pause" id="pauseBtn" style="display:none">||</button>
+          <button class="btn btn-resume" id="resumeBtn" style="display:none">&#9654;</button>
+          <button class="btn btn-stop" id="stopBtn">&#9632;</button>
+        </div>
       </div>
+      <div class="input-status" id="inputStatus"></div>
     </div>
     <script>
       console.log('[OVERLAY] Script loading...');
 
+      const overlay = document.getElementById('overlay');
       const indicator = document.getElementById('indicator');
+      const collapsedIndicator = document.getElementById('collapsedIndicator');
       const statusEl = document.getElementById('status');
       const durationEl = document.getElementById('duration');
+      const collapsedDuration = document.getElementById('collapsedDuration');
       const detailsEl = document.getElementById('details');
+      const mouseActivityEl = document.getElementById('mouseActivity');
       const inputStatusEl = document.getElementById('inputStatus');
       const pauseBtn = document.getElementById('pauseBtn');
       const resumeBtn = document.getElementById('resumeBtn');
       const stopBtn = document.getElementById('stopBtn');
       const playBtn = document.getElementById('playBtn');
+      const expandBtn = document.getElementById('expandBtn');
+      const collapseBtn = document.getElementById('collapseBtn');
 
       let duration = 0;
       let lastVideoPath = '';
       let currentResolution = null;
       let currentFps = null;
       let currentInputState = null;
+      let currentMode = 'expanded';
+
+      // Listen for mode changes from main process
+      window.electronAPI.onOverlayMode((data) => {
+        console.log('[OVERLAY] Mode change received:', data.mode);
+        setMode(data.mode);
+      });
+
+      // Click on collapsed overlay to expand (only via double-click to allow dragging)
+      overlay.addEventListener('dblclick', (e) => {
+        if (currentMode === 'collapsed') {
+          setMode('expanded');
+          window.electronAPI.setOverlayMode('expanded');
+        }
+      });
+
+      // Expand button click
+      expandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setMode('expanded');
+        window.electronAPI.setOverlayMode('expanded');
+      });
+
+      // Collapse button click
+      collapseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setMode('collapsed');
+        window.electronAPI.setOverlayMode('collapsed');
+      });
+
+      function setMode(mode) {
+        currentMode = mode;
+        if (mode === 'collapsed') {
+          overlay.classList.add('collapsed');
+        } else {
+          overlay.classList.remove('collapsed');
+        }
+      }
 
       // Listen for status updates
       window.electronAPI.onRecordingStatus((status) => {
         console.log('[OVERLAY] Status update received:', JSON.stringify(status));
-        updateUI(status.state, status.duration, status.resolution, status.fps, status.inputState);
+        updateUI(status.state, status.duration, status.resolution, status.fps, status.inputState, status.mouseActivity);
       });
 
       // Listen for recording finished
@@ -157,7 +353,7 @@
         playBtn.style.display = 'flex';
       });
 
-      function updateUI(state, dur, resolution, fps, inputState) {
+      function updateUI(state, dur, resolution, fps, inputState, mouseActivity) {
         duration = dur || 0;
         currentResolution = resolution;
         currentFps = fps;
@@ -165,8 +361,12 @@
         updateDuration();
         updateDetails();
         updateInputStatus();
+        updateMouseActivity(mouseActivity);
 
+        // Update both collapsed and expanded indicators
         indicator.className = 'indicator';
+        collapsedIndicator.className = 'collapsed-indicator';
+
         statusEl.className = 'status';
         pauseBtn.style.display = 'none';
         resumeBtn.style.display = 'none';
@@ -174,11 +374,13 @@
 
         if (state === 'recording') {
           indicator.classList.add('recording');
+          collapsedIndicator.classList.add('recording');
           statusEl.classList.add('recording');
           statusEl.textContent = 'REC';
           pauseBtn.style.display = 'flex';
         } else if (state === 'paused') {
           indicator.classList.add('paused');
+          collapsedIndicator.classList.add('paused');
           statusEl.classList.add('paused');
           statusEl.textContent = 'PAUSED';
           resumeBtn.style.display = 'flex';
@@ -194,7 +396,9 @@
         const seconds = Math.floor(duration / 1000);
         const minutes = Math.floor(seconds / 60);
         const secs = seconds % 60;
-        durationEl.textContent = minutes.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
+        const timeStr = minutes.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
+        durationEl.textContent = timeStr;
+        collapsedDuration.textContent = timeStr;
       }
 
       function updateDetails() {
@@ -202,6 +406,14 @@
           detailsEl.textContent = `${currentResolution.width}x${currentResolution.height} @ ${currentFps}fps`;
         } else {
           detailsEl.textContent = '';
+        }
+      }
+
+      function updateMouseActivity(eventsPerSecond) {
+        if (eventsPerSecond && eventsPerSecond > 0) {
+          mouseActivityEl.innerHTML = `Mouse: <span>${eventsPerSecond}</span> ev/s`;
+        } else {
+          mouseActivityEl.innerHTML = '';
         }
       }
 

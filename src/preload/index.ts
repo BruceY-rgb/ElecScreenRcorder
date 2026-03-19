@@ -19,6 +19,7 @@ export interface RecordingStatus {
   frameCount: number;
   resolution?: { width: number; height: number };
   fps?: number;
+  mouseActivity?: number;
   inputState?: {
     anyKeyPressed: boolean;
     mouseButtonPressed: boolean;
@@ -45,6 +46,11 @@ export interface FinishResult {
   movementsPath: string;
   duration: number;
   recordingFolder: string;
+}
+
+export interface Preferences {
+  defaultSavePath: string;
+  autoCollapseOverlay?: boolean;
 }
 
 export interface InputState {
@@ -85,6 +91,21 @@ const electronAPI = {
 
   openVideo: (videoPath: string): Promise<void> =>
     ipcRenderer.invoke('recorder:openVideo', videoPath),
+
+  // Preferences
+  getPreferences: (): Promise<Preferences> =>
+    ipcRenderer.invoke('preferences:get'),
+
+  setPreferences: (prefs: Partial<Preferences>): Promise<void> =>
+    ipcRenderer.invoke('preferences:set', prefs),
+
+  // Overlay mode control
+  setOverlayMode: (mode: 'expanded' | 'collapsed'): Promise<void> =>
+    ipcRenderer.invoke('overlay:setMode', mode),
+
+  onOverlayMode: (callback: (data: { mode: 'expanded' | 'collapsed' }) => void) => {
+    ipcRenderer.on('overlay:mode', (_, data) => callback(data));
+  },
 
   onRecordingStatus: (callback: (status: RecordingStatus) => void) => {
     ipcRenderer.on('recording-status', (_, data) => callback(data));

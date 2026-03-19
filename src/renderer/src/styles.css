@@ -172,6 +172,14 @@ body {
   color: var(--text-primary);
 }
 
+/* Mouse activity display */
+.hero-mouse-activity {
+  font-size: 14px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
 /* Contextual action buttons row */
 .hero-actions {
   display: flex;
@@ -532,4 +540,10 @@ body {
 
 .overlay .duration {
   font-family: monospace;
+}
+
+.overlay-mouse {
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 4px;
 }

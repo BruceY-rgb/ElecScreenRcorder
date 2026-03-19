@@ -33,6 +33,10 @@ function SystemStatus({ systemInfo }: SystemStatusProps) {
         <span className="badge-label">RAM</span>
         <span className="badge-value">{systemInfo.ramGB}GB</span>
       </span>
+      <span className="system-badge">
+        <span className="badge-label">Mouse</span>
+        <span className="badge-value">{systemInfo.mousePollingRate}Hz</span>
+      </span>
     </footer>
   );
 }

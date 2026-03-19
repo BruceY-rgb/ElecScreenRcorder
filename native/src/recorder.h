@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <memory>
 #include <cstdint>
 #include <windows.h>
@@ -149,6 +150,12 @@ private:
     int64_t totalPausedDuration_ = 0;
     int64_t pauseBeginTime_ = 0;
 
+    // Segment tracking for pause/resume
+    std::vector<std::string> segmentPaths_;    // Completed segment file paths
+    std::string currentSegmentPath_;            // Currently recording segment
+    int segmentCounter_ = 0;
+    std::string finalOutputPath_;               // User-specified final output path
+
     // Check for hardware encoders
     EncoderType checkHardwareEncoders();
 
@@ -161,8 +168,17 @@ private:
     // Wait for FFmpeg to actually start recording by parsing stderr
     bool waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs);
 
-    // Send commands to FFmpeg
-    void sendToFFmpeg(const char* cmd, size_t len);
+    // Gracefully stop the current FFmpeg process
+    bool stopFFmpegGracefully(int timeoutMs = 10000);
+
+    // Generate next segment file path (e.g. recording_seg001.mkv)
+    std::string generateSegmentPath();
+
+    // Concatenate all segments using ffmpeg concat demuxer
+    bool concatenateSegments();
+
+    // Delete temporary segment files
+    void cleanupSegmentFiles();
 };
 
 // Global functions

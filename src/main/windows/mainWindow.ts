@@ -44,7 +44,10 @@ export function createOverlayWindow(): BrowserWindow {
     transparent: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
     show: false,
     backgroundColor: '#12121f',
     webPreferences: {

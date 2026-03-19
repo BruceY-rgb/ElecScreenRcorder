@@ -112,6 +112,12 @@ std::string createErrorResponse(const std::string& message);
 std::string createInputStateResponse(const InputState& state);
 
 /**
+ * Create a mouse activity response JSON string
+ * @param eventsPerSecond Mouse move events per second
+ */
+std::string createMouseActivityResponse(int eventsPerSecond);
+
+/**
  * Escape a string for JSON (handle special characters)
  */
 std::string jsonEscape(const std::string& s);

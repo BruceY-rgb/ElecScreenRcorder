@@ -264,6 +264,12 @@ private:
     std::mutex responseQueueMutex_;
     std::queue<std::string> responseQueue_;
 
+    // Mouse activity tracking
+    std::atomic<bool> mouseActivityRunning_{false};
+    std::thread mouseActivityThread_;
+    int lastMouseMoveCount_ = 0;
+    std::mutex mouseActivityMutex_;
+
 public:
     RecorderApp() : outputHandler_(new StdioOutputHandler()) {}
 
@@ -409,6 +415,10 @@ public:
         }
 
         state_ = AppState::RECORDING;
+
+        // Start mouse activity reporting
+        startMouseActivityReporting();
+
         sendResponse(createStatusResponse("recording"));
     }
 
@@ -422,6 +432,9 @@ public:
         std::string videoPath = currentVideoPath_;
         std::string actionsPath = currentActionsPath_;
         std::string movementsPath = currentMovementsPath_;
+
+        // Stop mouse activity reporting first
+        stopMouseActivityReporting();
 
         stopRecording();
 
@@ -437,7 +450,10 @@ public:
 
     // Handle PAUSE command
     void handlePause() {
+        std::cerr << "[MAIN] handlePause() called, current state=" << (int)state_ << std::endl;
+
         if (state_ != AppState::RECORDING) {
+            std::cerr << "[MAIN] handlePause() - NOT RECORDING, returning error" << std::endl;
             sendResponse(createErrorResponse("Not recording"));
             return;
         }
@@ -445,45 +461,78 @@ public:
         pauseBeginTime_ = getHighPrecisionTimestamp();
 
         // Pause CSV writer
+        std::cerr << "[MAIN] handlePause() - pausing CSV writer" << std::endl;
         pauseCsvWriter();
 
         // Stop input capture - prevent events from being recorded during pause
+        std::cerr << "[MAIN] handlePause() - stopping input capture" << std::endl;
         stopInputCapture();
 
-        // Pause OBS/FFmpeg recording (sends 'p' command to FFmpeg stdin)
+        // Pause OBS/FFmpeg recording (stops FFmpeg and saves segment)
+        std::cerr << "[MAIN] handlePause() - calling recorder->pauseRecording()" << std::endl;
         Recorder* recorder = getRecorder();
         if (recorder) {
             recorder->pauseRecording();
         }
+        std::cerr << "[MAIN] handlePause() - recorder->pauseRecording() returned" << std::endl;
+
+        // Stop mouse activity reporting during pause
+        std::cerr << "[MAIN] handlePause() - stopping mouse activity reporting" << std::endl;
+        stopMouseActivityReporting();
 
         state_ = AppState::PAUSED;
+        std::cerr << "[MAIN] handlePause() - sending paused response" << std::endl;
         sendResponse(createStatusResponse("paused"));
+        std::cerr << "[MAIN] handlePause() - DONE" << std::endl;
     }
 
     // Handle RESUME command
     void handleResume() {
+        std::cerr << "[MAIN] handleResume() called, current state=" << (int)state_ << std::endl;
+
         if (state_ != AppState::PAUSED) {
+            std::cerr << "[MAIN] handleResume() - NOT PAUSED, returning error" << std::endl;
             sendResponse(createErrorResponse("Not paused"));
             return;
         }
+
+        // Restart mouse activity reporting
+        std::cerr << "[MAIN] handleResume() - starting mouse activity reporting" << std::endl;
+        startMouseActivityReporting();
 
         int64_t pauseEnd = getHighPrecisionTimestamp();
         totalPausedDuration_ += (pauseEnd - pauseBeginTime_);
 
         // Resume CSV writer
+        std::cerr << "[MAIN] handleResume() - resuming CSV writer" << std::endl;
         resumeCsvWriter();
 
         // Restart input capture to resume recording events
+        std::cerr << "[MAIN] handleResume() - starting input capture" << std::endl;
         startInputCapture();
 
-        // Resume OBS/FFmpeg recording
+        // Resume OBS/FFmpeg recording (starts a new segment)
+        std::cerr << "[MAIN] handleResume() - calling recorder->resumeRecording()" << std::endl;
         Recorder* recorder = getRecorder();
         if (recorder) {
             recorder->resumeRecording();
+
+            // Check if resume actually succeeded (FFmpeg may have failed to start)
+            if (recorder->getState() != RecordingState::RECORDING) {
+                std::cerr << "[MAIN] handleResume() - RESUME FAILED, rolling back" << std::endl;
+                // Resume failed - roll back
+                stopMouseActivityReporting();
+                stopInputCapture();
+                pauseCsvWriter();
+                sendResponse(createErrorResponse("Failed to resume recording: FFmpeg failed to start new segment"));
+                return;
+            }
         }
+        std::cerr << "[MAIN] handleResume() - recorder->resumeRecording() succeeded" << std::endl;
 
         state_ = AppState::RECORDING;
         sendResponse(createStatusResponse("recording"));
+        std::cerr << "[MAIN] handleResume() - DONE" << std::endl;
     }
 
     // Handle SYSINFO command
@@ -552,6 +601,46 @@ public:
 
     bool isSocketMode() const {
         return commMode_ == CommMode::SOCKET;
+    }
+
+    // Start mouse activity reporting thread
+    void startMouseActivityReporting() {
+        if (mouseActivityRunning_.load()) return;
+
+        lastMouseMoveCount_ = 0;
+        mouseActivityRunning_.store(true);
+        mouseActivityThread_ = std::thread([this]() {
+            while (mouseActivityRunning_.load()) {
+                // Get current queue size
+                int currentCount = getMouseMoveQueueSize();
+
+                // Calculate events per second (difference from last reading)
+                int eventsPerSecond = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mouseActivityMutex_);
+                    eventsPerSecond = currentCount - lastMouseMoveCount_;
+                    lastMouseMoveCount_ = currentCount;
+                }
+
+                // Send mouse activity update
+                if (state_ == AppState::RECORDING) {
+                    sendResponse(createMouseActivityResponse(eventsPerSecond));
+                }
+
+                // Sleep for 1 second
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        });
+    }
+
+    // Stop mouse activity reporting thread
+    void stopMouseActivityReporting() {
+        if (!mouseActivityRunning_.load()) return;
+
+        mouseActivityRunning_.store(false);
+        if (mouseActivityThread_.joinable()) {
+            mouseActivityThread_.join();
+        }
     }
 };
 

@@ -59,6 +59,7 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
 
   const [savePath, setSavePath] = useState('');
   const [setAsDefault, setSetAsDefault] = useState(false);
+  const [autoCollapseOverlay, setAutoCollapseOverlay] = useState(false);
   const [isCheckingInput, setIsCheckingInput] = useState(false);
   const [inputWarning, setInputWarning] = useState<string | null>(null);
   const [lastVideoPath, setLastVideoPath] = useState<string | null>(null);
@@ -84,6 +85,12 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
       if (defaultPath) {
         setSavePath(defaultPath);
         setSetAsDefault(true);
+      }
+    });
+    // Load preferences
+    window.electronAPI.getPreferences().then((prefs) => {
+      if (prefs.autoCollapseOverlay !== undefined) {
+        setAutoCollapseOverlay(prefs.autoCollapseOverlay);
       }
     });
   }, []);
@@ -265,6 +272,10 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
           <>
             <div className={heroButtonClass}>●</div>
             <div className="hero-timer">{formatDuration(status.duration)}</div>
+            <div className="hero-mouse-activity" style={{ color: 'red', fontWeight: 'bold' }}>
+              Mouse: {status.mouseActivity || 0} events/s
+              {console.log('[DEBUG] Mouse Activity:', status.mouseActivity)}
+            </div>
             <div className="hero-actions">
               <button
                 className="hero-action-btn hero-action-btn--pause"
@@ -288,6 +299,10 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
           <>
             <div className={heroButtonClass}>❚❚</div>
             <div className="hero-timer">{formatDuration(status.duration)}</div>
+            <div className="hero-mouse-activity" style={{ color: 'red', fontWeight: 'bold' }}>
+              Mouse: {status.mouseActivity || 0} events/s
+              {console.log('[DEBUG PAUSED] Mouse Activity:', status.mouseActivity)}
+            </div>
             <div className="hero-actions">
               <button
                 className="hero-action-btn hero-action-btn--resume"
@@ -445,6 +460,19 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
                 onChange={(e) => setConfig({ ...config, organizeByTimestamp: e.target.checked })}
               />
               Organize by timestamp
+            </label>
+
+            <label className="setting-checkbox">
+              <input
+                type="checkbox"
+                checked={autoCollapseOverlay}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setAutoCollapseOverlay(checked);
+                  window.electronAPI.setPreferences({ autoCollapseOverlay: checked });
+                }}
+              />
+              Auto-collapse overlay when recording
             </label>
           </div>
         </div>

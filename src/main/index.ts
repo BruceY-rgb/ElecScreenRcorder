@@ -5,6 +5,23 @@ import { registerHandlers } from './ipc/handlers';
 import { RecorderService, RecorderConfig } from './services/RecorderService';
 import { createMainWindow, createOverlayWindow } from './windows/mainWindow';
 
+// Add FFmpeg DLL directory to PATH at app startup
+function setupFFmpegPath() {
+  const ffmpegDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'native/dist')
+    : path.join(__dirname, '../../native/dist');
+
+  // Add to process PATH (for current process)
+  const currentPath = process.env.PATH || '';
+  if (!currentPath.includes(ffmpegDir)) {
+    process.env.PATH = ffmpegDir + path.delimiter + currentPath;
+    console.log(`[Main] Added FFmpeg path to PATH: ${ffmpegDir}`);
+  }
+}
+
+// Call early before any other initialization
+setupFFmpegPath();
+
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let recorderService: RecorderService | null = null;

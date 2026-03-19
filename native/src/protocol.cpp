@@ -186,3 +186,10 @@ std::string createInputStateResponse(const InputState& state) {
     j["pressedMouseBtns"] = state.pressedMouseBtns;
     return j.dump();
 }
+
+std::string createMouseActivityResponse(int eventsPerSecond) {
+    json j;
+    j["type"] = "mouse_activity";
+    j["eventsPerSecond"] = eventsPerSecond;
+    return j.dump();
+}

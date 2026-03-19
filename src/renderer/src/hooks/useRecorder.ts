@@ -19,6 +19,7 @@ export interface RecordingStatus {
   frameCount: number;
   resolution?: { width: number; height: number };
   fps?: number;
+  mouseActivity?: number;
   inputState?: {
     anyKeyPressed: boolean;
     mouseButtonPressed: boolean;
