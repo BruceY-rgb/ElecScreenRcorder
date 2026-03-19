@@ -279,6 +279,9 @@ export class RecorderService {
       throw new Error(`Cannot start recording: already ${this.state}`);
     }
 
+    // Debug: log config received
+    console.log('[DEBUG RecorderService.start] Resolution:', config.resolution);
+
     writeTimelineLog('S1: start() called, preparing...');
 
     // Generate default save path if not provided

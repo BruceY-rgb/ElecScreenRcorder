@@ -28,6 +28,11 @@ const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
 interface Preferences {
   defaultSavePath: string;
   autoCollapseOverlay?: boolean;
+  hotkeys?: {
+    start?: string;
+    pause?: string;
+    stop?: string;
+  };
 }
 
 function loadPreferences(): Preferences {
@@ -84,6 +89,19 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     savePreferences({ ...current, ...prefs });
   });
 
+  // Get hotkeys
+  ipcMain.handle('hotkeys:get', async (): Promise<Record<string, string>> => {
+    const prefs = loadPreferences();
+    return prefs.hotkeys || { start: 'F9', pause: 'F10', stop: 'F11' };
+  });
+
+  // Set hotkeys
+  ipcMain.handle('hotkeys:set', async (_, hotkeys: Record<string, string>): Promise<void> => {
+    const prefs = loadPreferences();
+    prefs.hotkeys = hotkeys;
+    savePreferences(prefs);
+  });
+
   // Overlay mode control (expanded/collapsed)
   ipcMain.handle('overlay:setMode', async (_, mode: 'expanded' | 'collapsed'): Promise<void> => {
     const windows = getWindows();
@@ -111,6 +129,9 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
   });
   ipcMain.handle('recorder:start', async (_, config: RecordingConfig): Promise<void> => {
     const windows = getWindows();
+
+    // Debug: log config received
+    console.log('[DEBUG IPC recorder:start] Resolution:', config.resolution);
 
     writeTimelineLog('===== RECORDING START SEQUENCE =====');
     writeTimelineLog('T0: User clicked start button');

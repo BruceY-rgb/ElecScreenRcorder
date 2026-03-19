@@ -51,6 +51,11 @@ export interface FinishResult {
 export interface Preferences {
   defaultSavePath: string;
   autoCollapseOverlay?: boolean;
+  hotkeys?: {
+    start?: string;
+    pause?: string;
+    stop?: string;
+  };
 }
 
 export interface InputState {
@@ -99,6 +104,16 @@ const electronAPI = {
   setPreferences: (prefs: Partial<Preferences>): Promise<void> =>
     ipcRenderer.invoke('preferences:set', prefs),
 
+  // Hotkeys
+  getHotkeys: (): Promise<Record<string, string>> =>
+    ipcRenderer.invoke('hotkeys:get'),
+
+  setHotkeys: (hotkeys: Record<string, string>): Promise<void> =>
+    ipcRenderer.invoke('hotkeys:set', hotkeys),
+
+  reRegisterHotkeys: (): void =>
+    ipcRenderer.send('hotkeys:register'),
+
   // Overlay mode control
   setOverlayMode: (mode: 'expanded' | 'collapsed'): Promise<void> =>
     ipcRenderer.invoke('overlay:setMode', mode),
@@ -117,6 +132,11 @@ const electronAPI = {
 
   onRecordingFinish: (callback: (result: FinishResult) => void) => {
     ipcRenderer.on('recording-finished', (_, data) => callback(data));
+  },
+
+  // Hotkey events
+  onHotkeyPressed: (callback: (action: string) => void) => {
+    ipcRenderer.on('hotkey:pressed', (_, action) => callback(action));
   },
 };
 

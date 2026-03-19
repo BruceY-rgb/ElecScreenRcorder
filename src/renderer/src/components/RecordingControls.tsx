@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRecorder, RecordingConfig, SystemInfo } from '../hooks/useRecorder';
 
 function formatDuration(ms: number): string {
@@ -137,11 +137,53 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
   }, [systemInfo, resolutionOptions]);
 
   // Hotkey configuration state
-  const [hotkeys, setHotkeys] = useState({
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({
     start: 'F9',
     pause: 'F10',
     stop: 'F11',
   });
+
+  // Load hotkeys from preferences on mount
+  useEffect(() => {
+    window.electronAPI.getHotkeys().then((savedHotkeys) => {
+      if (savedHotkeys && Object.keys(savedHotkeys).length > 0) {
+        setHotkeys(savedHotkeys);
+      }
+    });
+  }, []);
+
+  // Save hotkeys when they change and re-register shortcuts
+  const updateHotkey = useCallback((action: string, hotkey: string) => {
+    setHotkeys(prev => {
+      const updated = { ...prev, [action]: hotkey };
+      window.electronAPI.setHotkeys(updated).then(() => {
+        // Re-register shortcuts in main process
+        window.electronAPI.reRegisterHotkeys();
+      });
+      return updated;
+    });
+  }, []);
+
+  // Ref to always access the latest handleStartRecording callback
+  const handleStartRecordingRef = useRef<((skipInputCheck: boolean) => Promise<void>) | null>(null);
+  // Listen for hotkey events from main process
+  useEffect(() => {
+    window.electronAPI.onHotkeyPressed((action: string) => {
+      console.log('[RecordingControls] Hotkey pressed:', action);
+      if (action === 'start') {
+        // Skip input check when triggered by hotkey (the hotkey press is expected)
+        handleStartRecordingRef.current?.(true);
+      } else if (action === 'pause') {
+        if (isPaused) {
+          resumeRecording();
+        } else if (isRecording) {
+          pauseRecording();
+        }
+      } else if (action === 'stop') {
+        stopRecording();
+      }
+    });
+  }, [isRecording, isPaused, resumeRecording, pauseRecording, stopRecording]);
 
   // Listen for recording finish to capture video path
   useEffect(() => {
@@ -172,7 +214,7 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
     }
   }, [savePath]);
 
-  const handleStartRecording = useCallback(async () => {
+  const handleStartRecording = useCallback(async (skipInputCheck: boolean = false) => {
     setIsCheckingInput(true);
     setInputWarning(null);
     setLastVideoPath(null);
@@ -183,27 +225,34 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
       organizeByTimestamp: config.organizeByTimestamp ?? true,
     };
 
+    // Debug: log the config being used
+    console.log('[DEBUG handleStartRecording] Resolution:', finalConfig.resolution);
+    console.log('[DEBUG handleStartRecording] Config source:', skipInputCheck ? 'hotkey' : 'button');
+
     if (setAsDefault && savePath) {
       await window.electronAPI.setDefaultSavePath(savePath);
     }
 
     try {
-      const inputState = await checkInputState();
+      // Skip input check when triggered by hotkey (the hotkey press is expected)
+      if (!skipInputCheck) {
+        const inputState = await checkInputState();
 
-      // DEBUG: log full input state to DevTools console
-      console.log('[DEBUG] checkInputState result:', JSON.stringify(inputState, null, 2));
+        // DEBUG: log full input state to DevTools console
+        console.log('[DEBUG] checkInputState result:', JSON.stringify(inputState, null, 2));
 
-      // Only block on keyboard keys — mouse buttons are expected to be
-      // pressed because the user just clicked the Start button.
-      if (inputState.pressedKeyCount > 0) {
-        console.warn('[DEBUG] Blocked! pressedKeyCount:', inputState.pressedKeyCount,
-          'pressedVKs:', inputState.pressedVKs,
-          'pressedMouseBtns:', inputState.pressedMouseBtns);
-        setInputWarning(
-          `检测到输入设备异常: ${inputState.pressedKeyCount} 个键盘按键被按下 (VK: ${JSON.stringify(inputState.pressedVKs || [])})。请松开所有按键后再开始录制。`
-        );
-        setIsCheckingInput(false);
-        return;
+        // Only block on keyboard keys — mouse buttons are expected to be
+        // pressed because the user just clicked the Start button.
+        if (inputState.pressedKeyCount > 0) {
+          console.warn('[DEBUG] Blocked! pressedKeyCount:', inputState.pressedKeyCount,
+            'pressedVKs:', inputState.pressedVKs,
+            'pressedMouseBtns:', inputState.pressedMouseBtns);
+          setInputWarning(
+            `检测到输入设备异常: ${inputState.pressedKeyCount} 个键盘按键被按下 (VK: ${JSON.stringify(inputState.pressedVKs || [])})。请松开所有按键后再开始录制。`
+          );
+          setIsCheckingInput(false);
+          return;
+        }
       }
 
       await startRecording(finalConfig);
@@ -213,6 +262,9 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
       setIsCheckingInput(false);
     }
   }, [checkInputState, config, startRecording, savePath, setAsDefault]);
+
+  // Keep ref in sync every render (no useEffect needed, avoids TDZ)
+  handleStartRecordingRef.current = handleStartRecording;
 
   // Clear warning after timeout
   useEffect(() => {
@@ -496,16 +548,32 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
               <input
                 className="hotkey-badge"
                 type="text"
-                value={hotkeys.start}
+                value={hotkeys.start || ''}
                 readOnly
-                onClick={() => setHotkeys({ ...hotkeys, start: 'Press key...' })}
+                placeholder="Click to set"
+                onClick={() => setHotkeys(prev => ({ ...prev, start: 'Press key...' }))}
                 onKeyDown={(e) => {
                   e.preventDefault();
                   if (e.key === 'Escape') {
-                    setHotkeys({ ...hotkeys, start: '' });
-                  } else {
-                    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-                    setHotkeys({ ...hotkeys, start: key });
+                    updateHotkey('start', '');
+                    return;
+                  }
+
+                  // Build modifier key string
+                  const parts: string[] = [];
+                  if (e.ctrlKey) parts.push('Ctrl');
+                  if (e.altKey) parts.push('Alt');
+                  if (e.shiftKey) parts.push('Shift');
+                  if (e.metaKey) parts.push('Meta');
+
+                  // Add main key
+                  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+                  if (key !== 'Control' && key !== 'Alt' && key !== 'Shift' && key !== 'Meta') {
+                    parts.push(key);
+                  }
+
+                  if (parts.length > 0) {
+                    updateHotkey('start', parts.join('+'));
                   }
                 }}
               />
@@ -516,16 +584,32 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
               <input
                 className="hotkey-badge"
                 type="text"
-                value={hotkeys.pause}
+                value={hotkeys.pause || ''}
                 readOnly
-                onClick={() => setHotkeys({ ...hotkeys, pause: 'Press key...' })}
+                placeholder="Click to set"
+                onClick={() => setHotkeys(prev => ({ ...prev, pause: 'Press key...' }))}
                 onKeyDown={(e) => {
                   e.preventDefault();
                   if (e.key === 'Escape') {
-                    setHotkeys({ ...hotkeys, pause: '' });
-                  } else {
-                    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-                    setHotkeys({ ...hotkeys, pause: key });
+                    updateHotkey('pause', '');
+                    return;
+                  }
+
+                  // Build modifier key string
+                  const parts: string[] = [];
+                  if (e.ctrlKey) parts.push('Ctrl');
+                  if (e.altKey) parts.push('Alt');
+                  if (e.shiftKey) parts.push('Shift');
+                  if (e.metaKey) parts.push('Meta');
+
+                  // Add main key
+                  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+                  if (key !== 'Control' && key !== 'Alt' && key !== 'Shift' && key !== 'Meta') {
+                    parts.push(key);
+                  }
+
+                  if (parts.length > 0) {
+                    updateHotkey('pause', parts.join('+'));
                   }
                 }}
               />
@@ -536,16 +620,32 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
               <input
                 className="hotkey-badge"
                 type="text"
-                value={hotkeys.stop}
+                value={hotkeys.stop || ''}
                 readOnly
-                onClick={() => setHotkeys({ ...hotkeys, stop: 'Press key...' })}
+                placeholder="Click to set"
+                onClick={() => setHotkeys(prev => ({ ...prev, stop: 'Press key...' }))}
                 onKeyDown={(e) => {
                   e.preventDefault();
                   if (e.key === 'Escape') {
-                    setHotkeys({ ...hotkeys, stop: '' });
-                  } else {
-                    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-                    setHotkeys({ ...hotkeys, stop: key });
+                    updateHotkey('stop', '');
+                    return;
+                  }
+
+                  // Build modifier key string
+                  const parts: string[] = [];
+                  if (e.ctrlKey) parts.push('Ctrl');
+                  if (e.altKey) parts.push('Alt');
+                  if (e.shiftKey) parts.push('Shift');
+                  if (e.metaKey) parts.push('Meta');
+
+                  // Add main key
+                  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+                  if (key !== 'Control' && key !== 'Alt' && key !== 'Shift' && key !== 'Meta') {
+                    parts.push(key);
+                  }
+
+                  if (parts.length > 0) {
+                    updateHotkey('stop', parts.join('+'));
                   }
                 }}
               />

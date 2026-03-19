@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { registerHandlers } from './ipc/handlers';
@@ -25,6 +25,104 @@ setupFFmpegPath();
 let mainWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let recorderService: RecorderService | null = null;
+
+// Preferences path
+const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
+
+interface Preferences {
+  defaultSavePath: string;
+  autoCollapseOverlay?: boolean;
+  hotkeys?: {
+    start?: string;
+    pause?: string;
+    stop?: string;
+  };
+}
+
+function loadPreferences(): Preferences {
+  try {
+    if (fs.existsSync(prefsPath)) {
+      return JSON.parse(fs.readFileSync(prefsPath, 'utf-8'));
+    }
+  } catch (e) {
+    console.error('[Preferences] Failed to load:', e);
+  }
+  return { defaultSavePath: '' };
+}
+
+// Register global shortcuts
+function registerGlobalShortcuts() {
+  const prefs = loadPreferences();
+  const hotkeys = prefs.hotkeys || { start: 'F9', pause: 'F10', stop: 'F11' };
+
+  // Unregister all first
+  globalShortcut.unregisterAll();
+
+  // Register start hotkey
+  if (hotkeys.start) {
+    try {
+      const success = globalShortcut.register(hotkeys.start, () => {
+        console.log('[Hotkey] Start pressed');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('hotkey:pressed', 'start');
+        }
+      });
+      if (success) {
+        console.log(`[Hotkey] Registered start: ${hotkeys.start}`);
+      } else {
+        console.warn(`[Hotkey] Failed to register start: ${hotkeys.start}`);
+      }
+    } catch (e) {
+      console.warn(`[Hotkey] Error registering start: ${e}`);
+    }
+  }
+
+  // Register pause hotkey
+  if (hotkeys.pause) {
+    try {
+      const success = globalShortcut.register(hotkeys.pause, () => {
+        console.log('[Hotkey] Pause pressed');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('hotkey:pressed', 'pause');
+        }
+      });
+      if (success) {
+        console.log(`[Hotkey] Registered pause: ${hotkeys.pause}`);
+      } else {
+        console.warn(`[Hotkey] Failed to register pause: ${hotkeys.pause}`);
+      }
+    } catch (e) {
+      console.warn(`[Hotkey] Error registering pause: ${e}`);
+    }
+  }
+
+  // Register stop hotkey
+  if (hotkeys.stop) {
+    try {
+      const success = globalShortcut.register(hotkeys.stop, () => {
+        console.log('[Hotkey] Stop pressed');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('hotkey:pressed', 'stop');
+        }
+      });
+      if (success) {
+        console.log(`[Hotkey] Registered stop: ${hotkeys.stop}`);
+      } else {
+        console.warn(`[Hotkey] Failed to register stop: ${hotkeys.stop}`);
+      }
+    } catch (e) {
+      console.warn(`[Hotkey] Error registering stop: ${e}`);
+    }
+  }
+}
+
+// Handle hotkey updates from renderer
+function setupHotkeyIPC() {
+  ipcMain.on('hotkeys:register', () => {
+    console.log('[Hotkey] Re-registering shortcuts...');
+    registerGlobalShortcuts();
+  });
+}
 
 // Load configuration from environment or config file
 function loadConfig(): RecorderConfig {
@@ -114,6 +212,10 @@ async function createWindows() {
   // Register IPC handlers with window getter (always returns current references)
   registerHandlers(recorderService, () => ({ mainWindow, overlayWindow }));
 
+  // Setup hotkey IPC and register shortcuts
+  setupHotkeyIPC();
+  registerGlobalShortcuts();
+
   // Handle window close
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -148,6 +250,9 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  // Unregister all global shortcuts
+  globalShortcut.unregisterAll();
+
   if (recorderService) {
     recorderService.destroy();
   }
