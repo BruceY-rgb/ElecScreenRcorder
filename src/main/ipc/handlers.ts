@@ -107,12 +107,27 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     const windows = getWindows();
     if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
       if (mode === 'collapsed') {
-        windows.overlayWindow.setSize(50, 50);
+        windows.overlayWindow.setSize(36, 36);
       } else {
         windows.overlayWindow.setSize(300, 90);
       }
       // Notify overlay of mode change
       windows.overlayWindow.webContents.send('overlay:mode', { mode });
+    }
+  });
+
+  // Overlay hover expand/collapse (36x36 orb <-> 300x90 full overlay)
+  ipcMain.handle('overlay:setHoverSize', async (_, expanded: boolean): Promise<void> => {
+    const windows = getWindows();
+    if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+      const [x, y] = windows.overlayWindow.getPosition();
+      if (expanded) {
+        // Expand leftward to full 300x90 overlay
+        windows.overlayWindow.setBounds({ x: x - (300 - 36), y, width: 300, height: 90 });
+      } else {
+        // Collapse back to 36x36 orb
+        windows.overlayWindow.setBounds({ x: x + (300 - 36), y, width: 36, height: 36 });
+      }
     }
   });
 
@@ -159,7 +174,7 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
       // Check if auto-collapse is enabled
       const prefs = loadPreferences();
       if (prefs.autoCollapseOverlay) {
-        windows.overlayWindow.setSize(50, 50);
+        windows.overlayWindow.setSize(36, 36);
         windows.overlayWindow.webContents.send('overlay:mode', { mode: 'collapsed' });
       } else {
         windows.overlayWindow.setSize(300, 90);

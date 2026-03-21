@@ -151,19 +151,8 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     //     audioInputCount++;
     // }
 
-    // Microphone input (if enabled) - use dshow
-    if (config.captureMicrophone) {
-        // Add thread_queue_size to prevent audio input blocking
-        cmd << " -thread_queue_size 512";
-        cmd << " -f dshow -i audio=\"";
-        if (!config.microphoneDevice.empty()) {
-            cmd << config.microphoneDevice;
-        } else {
-            cmd << "外部麦克风 (Realtek(R) Audio)";
-        }
-        cmd << "\"";
-        audioInputCount++;
-    }
+    // Microphone is now recorded to a separate file via a dedicated FFmpeg process.
+    // It is no longer mixed into the video file.
 
     // ===== OUTPUT OPTIONS AFTER ALL INPUTS =====
     // Video encoder
@@ -412,6 +401,24 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     segmentPaths_.clear();
     currentSegmentPath_ = generateSegmentPath();
 
+    // Initialize mic segment tracking
+    micSegmentCounter_ = 0;
+    micSegmentPaths_.clear();
+    currentMicSegmentPath_.clear();
+    finalMicAudioPath_.clear();
+
+    if (config.captureMicrophone) {
+        // Derive mic audio path from video path: recording.mkv -> recording_mic.m4a
+        std::string basePath = config.savePath;
+        size_t dotPos = basePath.rfind('.');
+        if (dotPos != std::string::npos) {
+            finalMicAudioPath_ = basePath.substr(0, dotPos) + "_mic.m4a";
+        } else {
+            finalMicAudioPath_ = basePath + "_mic.m4a";
+        }
+        currentMicSegmentPath_ = generateMicSegmentPath();
+    }
+
     std::cerr << "[RECORDER] startRecording: outputPath=" << outputPath_ << std::endl;
     std::cerr << "[RECORDER] startRecording: segment=" << currentSegmentPath_ << std::endl;
     std::cerr << "[RECORDER] startRecording: width=" << config.width << " height=" << config.height << " fps=" << config.fps << std::endl;
@@ -427,26 +434,39 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     writeNativeLog((std::string("N3: startFFmpeg() returned: ") + (started ? "true" : "false")).c_str());
     std::cerr << "[RECORDER] startRecording: startFFmpeg returned " << started << std::endl;
 
-    // If failed and audio was enabled, try without audio
+    // If failed and audio was enabled, try without system audio only (keep microphone)
     if (!started && (config.captureAudio || config.captureMicrophone)) {
-        std::cerr << "[RECORDER] startRecording: FFmpeg failed with audio, retrying without audio" << std::endl;
-        RecordingConfig noAudioConfig = config;
-        noAudioConfig.captureAudio = false;
-        noAudioConfig.captureMicrophone = false;
-        noAudioConfig.savePath = currentSegmentPath_;
-        command = buildFFmpegCommand(noAudioConfig);
+        std::cerr << "[RECORDER] startRecording: FFmpeg failed with audio, retrying without system audio" << std::endl;
+        RecordingConfig noSysAudioConfig = config;
+        noSysAudioConfig.captureAudio = false;  // Disable system audio only
+        // Keep captureMicrophone as-is (do not disable)
+        noSysAudioConfig.savePath = currentSegmentPath_;
+        command = buildFFmpegCommand(noSysAudioConfig);
         std::cerr << "[RECORDER] startRecording: Retry FFmpeg command: " << command << std::endl;
         started = startFFmpeg(command);
         if (started) {
-            config_ = noAudioConfig;
+            config_ = noSysAudioConfig;
             config_.savePath = finalOutputPath_;  // Keep original final path in config_
-            std::cerr << "[RECORDER] startRecording: Recording started successfully (without audio)" << std::endl;
+            std::cerr << "[RECORDER] startRecording: Recording started successfully (without system audio)" << std::endl;
         }
     }
 
     if (!started) {
         std::cerr << "[RECORDER] startRecording: startFFmpeg failed" << std::endl;
         return false;
+    }
+
+    // Start microphone FFmpeg process if enabled
+    if (config_.captureMicrophone && !finalMicAudioPath_.empty()) {
+        RecordingConfig micConfig = config_;
+        micConfig.savePath = currentMicSegmentPath_;
+        std::string micCmd = buildMicFFmpegCommand(micConfig);
+        writeNativeLog(("N_MIC: Starting mic FFmpeg: " + micCmd).c_str());
+        bool micStarted = startMicFFmpeg(micCmd);
+        if (!micStarted) {
+            writeNativeLog("N_MIC_WARN: Mic FFmpeg failed to start, continuing without mic");
+            finalMicAudioPath_.clear();
+        }
     }
 
     state_ = RecordingState::RECORDING;
@@ -470,6 +490,14 @@ void Recorder::stopRecording() {
     }
     // If PAUSED, FFmpeg is already stopped and segment already saved in pauseRecording()
 
+    // Stop mic FFmpeg if running
+    if (state_ == RecordingState::RECORDING && micFfmpegProcess_.hProcess) {
+        writeNativeLog("S2_MIC: Stopping mic FFmpeg");
+        stopMicFFmpegGracefully();
+        micSegmentPaths_.push_back(currentMicSegmentPath_);
+        writeNativeLog(("S2_MIC: Saved final mic segment: " + currentMicSegmentPath_).c_str());
+    }
+
     // Handle segment concatenation
     if (segmentPaths_.size() > 1) {
         writeNativeLog(("S3: Concatenating " + std::to_string(segmentPaths_.size()) + " segments").c_str());
@@ -490,11 +518,36 @@ void Recorder::stopRecording() {
         std::rename(segmentPaths_[0].c_str(), finalOutputPath_.c_str());
     }
 
+    // Handle mic segment concatenation
+    if (!finalMicAudioPath_.empty()) {
+        if (micSegmentPaths_.size() > 1) {
+            writeNativeLog(("S3_MIC: Concatenating " + std::to_string(micSegmentPaths_.size()) + " mic segments").c_str());
+            if (concatenateMicSegments()) {
+                writeNativeLog("S4_MIC: Mic concatenation successful");
+                cleanupMicSegmentFiles();
+            } else {
+                writeNativeLog("S4_MIC: Mic concatenation FAILED");
+                if (!micSegmentPaths_.empty()) {
+                    std::rename(micSegmentPaths_[0].c_str(), finalMicAudioPath_.c_str());
+                }
+            }
+        } else if (micSegmentPaths_.size() == 1) {
+            writeNativeLog("S3_MIC: Single mic segment, renaming to final output");
+            std::rename(micSegmentPaths_[0].c_str(), finalMicAudioPath_.c_str());
+        }
+    }
+
     // Reset segment state
     segmentPaths_.clear();
     currentSegmentPath_.clear();
     segmentCounter_ = 0;
     finalOutputPath_.clear();
+
+    // Reset mic segment state
+    micSegmentPaths_.clear();
+    currentMicSegmentPath_.clear();
+    micSegmentCounter_ = 0;
+    // Keep finalMicAudioPath_ so getMicAudioPath() can return it after stop
 
     state_ = RecordingState::IDLE;
     std::cout << "[RECORDER] Recording stopped" << std::endl;
@@ -524,6 +577,14 @@ void Recorder::pauseRecording() {
     std::cerr << "[RECORDER] pauseRecording() - pushing segment: " << currentSegmentPath_ << std::endl;
     segmentPaths_.push_back(currentSegmentPath_);
     writeNativeLog(("P2: Segment saved: " + currentSegmentPath_).c_str());
+
+    // Stop mic FFmpeg and save mic segment
+    if (!finalMicAudioPath_.empty() && micFfmpegProcess_.hProcess) {
+        writeNativeLog("P2_MIC: Stopping mic FFmpeg for pause");
+        stopMicFFmpegGracefully();
+        micSegmentPaths_.push_back(currentMicSegmentPath_);
+        writeNativeLog(("P2_MIC: Mic segment saved: " + currentMicSegmentPath_).c_str());
+    }
 
     pauseBeginTime_ = getHighPrecisionTimestamp();
     state_ = RecordingState::PAUSED;
@@ -576,6 +637,20 @@ void Recorder::resumeRecording() {
     }
 
     std::cerr << "[RECORDER] resumeRecording() - FFmpeg started successfully" << std::endl;
+
+    // Start new mic segment if mic is enabled
+    if (!finalMicAudioPath_.empty()) {
+        currentMicSegmentPath_ = generateMicSegmentPath();
+        RecordingConfig micConfig = config_;
+        micConfig.savePath = currentMicSegmentPath_;
+        std::string micCmd = buildMicFFmpegCommand(micConfig);
+        writeNativeLog(("R_MIC: Starting new mic segment: " + currentMicSegmentPath_).c_str());
+        bool micStarted = startMicFFmpeg(micCmd);
+        if (!micStarted) {
+            writeNativeLog("R_MIC_WARN: Mic FFmpeg failed to start on resume");
+        }
+    }
+
     totalPausedDuration_ += (getHighPrecisionTimestamp() - pauseBeginTime_);
     state_ = RecordingState::RECORDING;
     writeNativeLog("R4: New segment recording started");
@@ -598,6 +673,17 @@ void Recorder::shutdown() {
         CloseHandle(ffmpegProcess_.hThread);
     }
 
+    // Clean up mic FFmpeg handles
+    if (micFfmpegStdin_) {
+        CloseHandle(micFfmpegStdin_);
+        micFfmpegStdin_ = nullptr;
+    }
+
+    if (micFfmpegProcess_.hProcess) {
+        CloseHandle(micFfmpegProcess_.hProcess);
+        CloseHandle(micFfmpegProcess_.hThread);
+    }
+
     if (g_timelineLogFile.is_open()) {
         writeNativeLog("===== NATIVE CORE SHUTDOWN =====");
         g_timelineLogFile.close();
@@ -611,6 +697,7 @@ bool Recorder::isPaused() const { return state_ == RecordingState::PAUSED; }
 RecordingState Recorder::getState() const { return state_; }
 EncoderType Recorder::getAvailableEncoder() const { return encoderType_; }
 std::string Recorder::getOutputPath() const { return outputPath_; }
+std::string Recorder::getMicAudioPath() const { return finalMicAudioPath_; }
 
 void Recorder::setStopCallback(StopCallback callback, void* userData) {
     stopCallback_ = callback;
@@ -799,6 +886,260 @@ void Recorder::cleanupSegmentFiles() {
             writeNativeLog(("CLEANUP: Removed " + seg).c_str());
         } else {
             writeNativeLog(("CLEANUP_WARN: Failed to remove " + seg).c_str());
+        }
+    }
+}
+
+// ===== Microphone separate FFmpeg process =====
+
+std::string Recorder::buildMicFFmpegCommand(const RecordingConfig& config) {
+    std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath_ << "\"";
+    cmd << " -y";
+    cmd << " -thread_queue_size 512";
+    // For microphone, use dshow to capture default audio input device
+    // If custom device is specified, use it; otherwise use default device
+    cmd << " -f dshow -i audio";
+    if (!config.microphoneDevice.empty()) {
+        cmd << "=\"" << config.microphoneDevice << "\"";
+    }
+    cmd << " -c:a aac";
+    cmd << " -b:a " << config.audioBitrate << "k";
+    cmd << " \"" << config.savePath << "\"";
+    return cmd.str();
+}
+
+bool Recorder::startMicFFmpeg(const std::string& command) {
+    writeNativeLog("MIC_F1: startMicFFmpeg() called");
+
+    HANDLE hStderrRead = NULL, hStderrWrite = NULL;
+    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
+
+    if (!CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        writeNativeLog("MIC_F_ERROR: Failed to create stderr pipe");
+        return false;
+    }
+    SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
+
+    HANDLE hStdinRead = NULL, hStdinWrite = NULL;
+    if (!CreatePipe(&hStdinRead, &hStdinWrite, &sa, 0)) {
+        writeNativeLog("MIC_F_ERROR: Failed to create stdin pipe");
+        CloseHandle(hStderrRead);
+        CloseHandle(hStderrWrite);
+        return false;
+    }
+    SetHandleInformation(hStdinWrite, HANDLE_FLAG_INHERIT, 0);
+
+    micFfmpegStdin_ = hStdinWrite;
+
+    STARTUPINFOA si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdInput = hStdinRead;
+    si.hStdOutput = hStderrWrite;
+    si.hStdError = hStderrWrite;
+
+    char* cmdLine = _strdup(command.c_str());
+    writeNativeLog(("MIC_F2: Creating mic FFmpeg process: " + command).c_str());
+
+    if (!CreateProcessA(nullptr, cmdLine, nullptr, nullptr, TRUE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        DWORD err = GetLastError();
+        writeNativeLog(("MIC_F_ERROR: CreateProcess failed, error=" + std::to_string(err)).c_str());
+        free(cmdLine);
+        CloseHandle(hStderrRead);
+        CloseHandle(hStderrWrite);
+        CloseHandle(hStdinRead);
+        CloseHandle(hStdinWrite);
+        micFfmpegStdin_ = nullptr;
+        return false;
+    }
+
+    free(cmdLine);
+    CloseHandle(hStderrWrite);
+    CloseHandle(hStdinRead);
+    micFfmpegProcess_ = pi;
+
+    writeNativeLog(("MIC_F3: Mic FFmpeg PID: " + std::to_string(pi.dwProcessId)).c_str());
+
+    // Wait for mic FFmpeg to be ready (audio-only starts faster)
+    // Reuse the same wait logic but with the mic process handle temporarily
+    PROCESS_INFORMATION savedMain = ffmpegProcess_;
+    ffmpegProcess_ = pi;
+    bool ready = waitForFFmpegReady(hStderrRead, 5000);
+    ffmpegProcess_ = savedMain;
+
+    CloseHandle(hStderrRead);
+
+    if (!ready) {
+        DWORD exitCode;
+        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+            writeNativeLog("MIC_F_ERROR: Mic FFmpeg exited early");
+        } else {
+            writeNativeLog("MIC_F_WARN: Mic FFmpeg timeout - terminating");
+            TerminateProcess(pi.hProcess, 1);
+        }
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        memset(&micFfmpegProcess_, 0, sizeof(micFfmpegProcess_));
+        if (micFfmpegStdin_) {
+            CloseHandle(micFfmpegStdin_);
+            micFfmpegStdin_ = nullptr;
+        }
+        return false;
+    }
+
+    writeNativeLog("MIC_F4: Mic FFmpeg is recording!");
+    return true;
+}
+
+bool Recorder::stopMicFFmpegGracefully(int timeoutMs) {
+    writeNativeLog("MIC_FFG1: stopMicFFmpegGracefully() called");
+
+    if (micFfmpegProcess_.hProcess && micFfmpegStdin_) {
+        const char quitCmd = 'q';
+        DWORD bytesWritten = 0;
+        WriteFile(micFfmpegStdin_, &quitCmd, 1, &bytesWritten, NULL);
+        FlushFileBuffers(micFfmpegStdin_);
+        CloseHandle(micFfmpegStdin_);
+        micFfmpegStdin_ = nullptr;
+        writeNativeLog("MIC_FFG2: Sent 'q', waiting for exit...");
+
+        DWORD waitResult = WaitForSingleObject(micFfmpegProcess_.hProcess, (DWORD)timeoutMs);
+        if (waitResult == WAIT_TIMEOUT) {
+            writeNativeLog("MIC_FFG3: Timeout, forcing termination");
+            TerminateProcess(micFfmpegProcess_.hProcess, 0);
+            WaitForSingleObject(micFfmpegProcess_.hProcess, 3000);
+        } else {
+            writeNativeLog("MIC_FFG3: Exited gracefully");
+        }
+    } else if (micFfmpegProcess_.hProcess) {
+        writeNativeLog("MIC_FFG2: No stdin, forcing termination");
+        TerminateProcess(micFfmpegProcess_.hProcess, 0);
+        WaitForSingleObject(micFfmpegProcess_.hProcess, 3000);
+    } else {
+        writeNativeLog("MIC_FFG2: No mic FFmpeg process to stop");
+        return true;
+    }
+
+    if (micFfmpegProcess_.hProcess) {
+        CloseHandle(micFfmpegProcess_.hProcess);
+        CloseHandle(micFfmpegProcess_.hThread);
+        memset(&micFfmpegProcess_, 0, sizeof(micFfmpegProcess_));
+    }
+
+    writeNativeLog("MIC_FFG4: Mic FFmpeg cleaned up");
+    return true;
+}
+
+std::string Recorder::generateMicSegmentPath() {
+    micSegmentCounter_++;
+
+    std::string dir, baseName, ext;
+    size_t lastSlash = finalMicAudioPath_.rfind('\\');
+    if (lastSlash == std::string::npos) {
+        lastSlash = finalMicAudioPath_.rfind('/');
+    }
+
+    if (lastSlash != std::string::npos) {
+        dir = finalMicAudioPath_.substr(0, lastSlash + 1);
+        baseName = finalMicAudioPath_.substr(lastSlash + 1);
+    } else {
+        dir = "";
+        baseName = finalMicAudioPath_;
+    }
+
+    size_t dotPos = baseName.rfind('.');
+    if (dotPos != std::string::npos) {
+        ext = baseName.substr(dotPos);
+        baseName = baseName.substr(0, dotPos);
+    } else {
+        ext = ".m4a";
+    }
+
+    char segNum[16];
+    snprintf(segNum, sizeof(segNum), "_seg%03d", micSegmentCounter_);
+
+    std::string segPath = dir + baseName + segNum + ext;
+    writeNativeLog(("MIC: Generated segment path: " + segPath).c_str());
+    return segPath;
+}
+
+bool Recorder::concatenateMicSegments() {
+    if (micSegmentPaths_.empty()) return false;
+
+    writeNativeLog(("MIC_CONCAT: Concatenating " + std::to_string(micSegmentPaths_.size()) + " mic segments").c_str());
+
+    std::string listPath = finalMicAudioPath_ + ".concat_list.txt";
+    {
+        std::ofstream listFile(listPath);
+        if (!listFile.is_open()) {
+            writeNativeLog("MIC_CONCAT_ERROR: Failed to create concat list file");
+            return false;
+        }
+        for (const auto& seg : micSegmentPaths_) {
+            std::string escapedPath = seg;
+            for (auto& c : escapedPath) {
+                if (c == '\\') c = '/';
+            }
+            listFile << "file '" << escapedPath << "'\n";
+        }
+        listFile.close();
+    }
+
+    std::string concatCmd = "\"" + ffmpegPath_ + "\""
+        + " -y -f concat -safe 0"
+        + " -i \"" + listPath + "\""
+        + " -c copy"
+        + " \"" + finalMicAudioPath_ + "\"";
+
+    writeNativeLog(("MIC_CONCAT: Command: " + concatCmd).c_str());
+
+    STARTUPINFOA si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    char* cmdLine = _strdup(concatCmd.c_str());
+    bool success = false;
+
+    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        DWORD waitResult = WaitForSingleObject(pi.hProcess, 60000);
+        if (waitResult == WAIT_TIMEOUT) {
+            writeNativeLog("MIC_CONCAT_ERROR: Timed out");
+            TerminateProcess(pi.hProcess, 1);
+        } else {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            if (exitCode == 0) {
+                writeNativeLog("MIC_CONCAT: Success");
+                success = true;
+            } else {
+                writeNativeLog(("MIC_CONCAT_ERROR: exit code " + std::to_string(exitCode)).c_str());
+            }
+        }
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    } else {
+        writeNativeLog(("MIC_CONCAT_ERROR: CreateProcess failed, error=" + std::to_string(GetLastError())).c_str());
+    }
+
+    free(cmdLine);
+    std::remove(listPath.c_str());
+    return success;
+}
+
+void Recorder::cleanupMicSegmentFiles() {
+    writeNativeLog(("MIC_CLEANUP: Removing " + std::to_string(micSegmentPaths_.size()) + " mic segment files").c_str());
+    for (const auto& seg : micSegmentPaths_) {
+        if (std::remove(seg.c_str()) == 0) {
+            writeNativeLog(("MIC_CLEANUP: Removed " + seg).c_str());
+        } else {
+            writeNativeLog(("MIC_CLEANUP_WARN: Failed to remove " + seg).c_str());
         }
     }
 }

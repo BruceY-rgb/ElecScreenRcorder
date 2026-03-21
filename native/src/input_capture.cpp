@@ -438,7 +438,7 @@ DWORD WINAPI HookThreadProc(LPVOID lpParameter) {
     return 0;
 }
 
-// Mouse polling thread (200Hz)
+// Mouse polling thread (200Hz) with high-precision timing
 DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
     (void)lpParameter;
 
@@ -446,9 +446,18 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
     int lastX = 0, lastY = 0;
     bool first = true;
 
-    // Poll at ~200Hz (Sleep 5ms)
+    // High-precision timing: target time starts at now + 5ms
+    int64_t targetTime = getHighPrecisionTimestamp() + 5;
+
+    // Poll at exactly 200Hz (5ms interval) using spin-wait
     // Runs while g_capturing is true (stops when stopInputCapture is called)
     while (g_capturing.load()) {
+        // Spin-wait until target time for high precision
+        while (getHighPrecisionTimestamp() < targetTime) {
+            // Busy wait - yields to other threads but stays precise
+            Sleep(0);
+        }
+
         if (GetCursorPos(&pos)) {
             if (first) {
                 // Initialize on first poll
@@ -461,31 +470,30 @@ DWORD WINAPI MousePollThreadProc(LPVOID lpParameter) {
                 int dx = pos.x - lastX;
                 int dy = pos.y - lastY;
 
-                // Only record if moved
-                if (dx != 0 || dy != 0) {
-                    int64_t timestamp = getHighPrecisionTimestamp();
+                // Always record every poll (5ms) for stable timestamp intervals
+                int64_t timestamp = getHighPrecisionTimestamp();
 
-                    MouseMoveEvent evt;
-                    evt.rawTime = timestamp;
-                    evt.x = pos.x;
-                    evt.y = pos.y;
-                    evt.dx = dx;
-                    evt.dy = dy;
+                MouseMoveEvent evt;
+                evt.rawTime = timestamp;
+                evt.x = pos.x;
+                evt.y = pos.y;
+                evt.dx = dx;
+                evt.dy = dy;
 
-                    if (g_mouseMoveQueue) {
-                        g_mouseMoveQueue->enqueue(evt);
-                        g_mouseMoveCounter.fetch_add(1, std::memory_order_relaxed);
-                    }
-
-                    lastX = pos.x;
-                    lastY = pos.y;
-                    g_lastMouseX = pos.x;
-                    g_lastMouseY = pos.y;
+                if (g_mouseMoveQueue) {
+                    g_mouseMoveQueue->enqueue(evt);
+                    g_mouseMoveCounter.fetch_add(1, std::memory_order_relaxed);
                 }
+
+                lastX = pos.x;
+                lastY = pos.y;
+                g_lastMouseX = pos.x;
+                g_lastMouseY = pos.y;
             }
         }
 
-        Sleep(5);  // ~200Hz with timeBeginPeriod(1)
+        // Set next target time: current target + 5ms
+        targetTime += 5;
     }
 
     return 0;

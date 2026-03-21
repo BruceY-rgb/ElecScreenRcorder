@@ -11,7 +11,7 @@
         padding: 0;
       }
       html, body {
-        background: #12121f;
+        background: transparent;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         user-select: none;
         overflow: hidden;
@@ -43,10 +43,18 @@
       .full-content .buttons {
         -webkit-app-region: no-drag;
       }
-      /* Collapsed mode (floating ball) */
+
+      /* === Collapsed mode: 36x36 transparent orb === */
       .overlay.collapsed {
-        height: 50px;
-        padding: 8px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        display: flex;
+        align-items: center;
         justify-content: center;
         cursor: grab;
         -webkit-app-region: drag;
@@ -54,71 +62,88 @@
       .overlay.collapsed:active {
         cursor: grabbing;
       }
-      .overlay.collapsed:hover {
-        background: #1a1a2e;
+
+      /* Hover expanded: full overlay */
+      .overlay.collapsed.hovered {
+        width: 300px;
+        height: 90px;
+        border-radius: 0;
+        background: #12121f;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 12px 16px;
+        cursor: default;
       }
+
+      /* Collapsed: hide full-content, show collapsed-content */
+      .overlay.collapsed .full-content { display: none; }
+      .overlay.collapsed .collapsed-content { display: flex; }
+
+      /* Collapsed + hovered: show full-content, hide collapsed-content */
+      .overlay.collapsed.hovered .full-content { display: flex; }
+      .overlay.collapsed.hovered .collapsed-content { display: none; }
+
       .collapsed-content {
         display: none;
-        flex-direction: column;
+        flex-direction: row;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        gap: 8px;
       }
-      .overlay.collapsed .collapsed-content {
-        display: flex;
-      }
-      .overlay.collapsed .full-content {
-        display: none;
-      }
+
+      /* === Glowing orb indicator (20px) === */
       .collapsed-indicator {
-        width: 28px;
-        height: 28px;
+        width: 20px;
+        height: 20px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #00d4aa 0%, #00a885 100%);
-        box-shadow: 0 2px 8px rgba(0, 212, 170, 0.4), 0 0 12px rgba(0, 212, 170, 0.2);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .collapsed-indicator::after {
-        content: '';
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #fff;
-        opacity: 0.9;
+        flex-shrink: 0;
+        background: radial-gradient(circle, #00ffd0 0%, #00d4aa 40%, #0088ff 80%, transparent 100%);
+        box-shadow: 0 0 12px rgba(0, 180, 216, 0.6), 0 0 24px rgba(0, 136, 255, 0.3);
+        -webkit-app-region: no-drag;
+        cursor: pointer;
       }
       .collapsed-indicator.recording {
-        background: linear-gradient(135deg, #ff4060 0%, #cc3350 100%);
-        box-shadow: 0 2px 12px rgba(255, 64, 96, 0.5), 0 0 20px rgba(255, 64, 96, 0.3);
-        animation: pulse 1.5s ease-in-out infinite;
-      }
-      .collapsed-indicator.recording::after {
-        background: #fff;
-        animation: recording-dot 1s ease-in-out infinite;
+        background: radial-gradient(circle, #ff6080 0%, #ff4060 60%, transparent 100%);
+        box-shadow: 0 0 12px rgba(255, 64, 96, 0.7), 0 0 24px rgba(255, 64, 96, 0.4);
+        animation: orb-pulse 2s ease-in-out infinite;
       }
       .collapsed-indicator.paused {
-        background: linear-gradient(135deg, #ffaa00 0%, #dd9900 100%);
-        box-shadow: 0 2px 8px rgba(255, 170, 0, 0.4), 0 0 12px rgba(255, 170, 0, 0.2);
+        background: radial-gradient(circle, #ffcc00 0%, #ffaa00 60%, transparent 100%);
+        box-shadow: 0 0 12px rgba(255, 170, 0, 0.6), 0 0 24px rgba(255, 170, 0, 0.3);
+        animation: none;
       }
-      .collapsed-indicator.paused::after {
-        background: #fff;
-        opacity: 0.7;
+      @keyframes orb-pulse {
+        0%, 100% {
+          box-shadow: 0 0 12px rgba(255,64,96,0.7), 0 0 24px rgba(255,64,96,0.4);
+          transform: scale(1);
+        }
+        50% {
+          box-shadow: 0 0 16px rgba(255,64,96,0.8), 0 0 32px rgba(255,64,96,0.5), 0 0 0 8px rgba(255,64,96,0);
+          transform: scale(1.05);
+        }
       }
-      @keyframes recording-dot {
-        0%, 100% { transform: scale(1); opacity: 0.9; }
-        50% { transform: scale(0.8); opacity: 0.6; }
-      }
+
+      /* Hide duration and state text in collapsed mode (orb only) */
+      .overlay.collapsed .collapsed-duration,
+      .overlay.collapsed .collapsed-state { display: none; }
+
       .collapsed-duration {
         font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 10px;
+        font-size: 14px;
         font-weight: 600;
         color: #e8e8f0;
-        background: rgba(0, 0, 0, 0.3);
-        padding: 2px 6px;
-        border-radius: 10px;
-        margin-top: 2px;
+        letter-spacing: 1px;
       }
+      .collapsed-state {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #00d4aa;
+        opacity: 0.8;
+      }
+      .collapsed-state.recording { color: #ff4060; }
+      .collapsed-state.paused { color: #ffaa00; }
+
+      /* === Expanded mode elements === */
       .indicator {
         width: 12px;
         height: 12px;
@@ -225,34 +250,14 @@
       .btn-play { background: rgba(0, 136, 255, 0.8); }
       .btn-collapse { background: rgba(136, 136, 136, 0.6); }
       .btn-collapse:hover { background: rgba(170, 170, 170, 0.8); }
-      .btn-expand {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        background: rgba(255, 64, 96, 0.8);
-        border: none;
-        cursor: pointer;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 16px;
-      }
-      .overlay.collapsed .btn-expand {
-        display: flex;
-      }
     </style>
   </head>
   <body>
     <div class="overlay" id="overlay">
       <div class="collapsed-content">
         <div class="collapsed-indicator" id="collapsedIndicator"></div>
-        <div class="collapsed-duration" id="collapsedDuration">00:00</div>
-        <button class="btn-expand" id="expandBtn" title="Expand">&#9660;</button>
+        <span class="collapsed-duration" id="collapsedDuration">00:00</span>
+        <span class="collapsed-state" id="collapsedState">READY</span>
       </div>
       <div class="full-content">
         <div class="indicator" id="indicator"></div>
@@ -292,7 +297,7 @@
       const resumeBtn = document.getElementById('resumeBtn');
       const stopBtn = document.getElementById('stopBtn');
       const playBtn = document.getElementById('playBtn');
-      const expandBtn = document.getElementById('expandBtn');
+      const collapsedState = document.getElementById('collapsedState');
       const collapseBtn = document.getElementById('collapseBtn');
 
       let duration = 0;
@@ -308,19 +313,36 @@
         setMode(data.mode);
       });
 
-      // Click on collapsed overlay to expand (only via double-click to allow dragging)
+      // Double-click collapsed overlay to expand to full mode
       overlay.addEventListener('dblclick', (e) => {
         if (currentMode === 'collapsed') {
+          overlay.classList.remove('hovered');
           setMode('expanded');
           window.electronAPI.setOverlayMode('expanded');
         }
       });
 
-      // Expand button click
-      expandBtn.addEventListener('click', (e) => {
+      // Hover events: expand orb to full overlay on mouseenter, collapse on mouseleave
+      overlay.addEventListener('mouseenter', () => {
+        if (currentMode === 'collapsed') {
+          overlay.classList.add('hovered');
+          window.electronAPI.setOverlayHoverSize(true);
+        }
+      });
+      overlay.addEventListener('mouseleave', () => {
+        if (currentMode === 'collapsed') {
+          overlay.classList.remove('hovered');
+          window.electronAPI.setOverlayHoverSize(false);
+        }
+      });
+
+      // Click on the orb dot to expand (for cases where hover doesn't trigger on small window)
+      collapsedIndicator.addEventListener('click', (e) => {
         e.stopPropagation();
-        setMode('expanded');
-        window.electronAPI.setOverlayMode('expanded');
+        if (currentMode === 'collapsed' && !overlay.classList.contains('hovered')) {
+          overlay.classList.add('hovered');
+          window.electronAPI.setOverlayHoverSize(true);
+        }
       });
 
       // Collapse button click
@@ -334,8 +356,10 @@
         currentMode = mode;
         if (mode === 'collapsed') {
           overlay.classList.add('collapsed');
+          overlay.classList.remove('hovered');
         } else {
           overlay.classList.remove('collapsed');
+          overlay.classList.remove('hovered');
         }
       }
 
@@ -366,6 +390,7 @@
         // Update both collapsed and expanded indicators
         indicator.className = 'indicator';
         collapsedIndicator.className = 'collapsed-indicator';
+        collapsedState.className = 'collapsed-state';
 
         statusEl.className = 'status';
         pauseBtn.style.display = 'none';
@@ -375,18 +400,23 @@
         if (state === 'recording') {
           indicator.classList.add('recording');
           collapsedIndicator.classList.add('recording');
+          collapsedState.classList.add('recording');
+          collapsedState.textContent = 'REC';
           statusEl.classList.add('recording');
           statusEl.textContent = 'REC';
           pauseBtn.style.display = 'flex';
         } else if (state === 'paused') {
           indicator.classList.add('paused');
           collapsedIndicator.classList.add('paused');
+          collapsedState.classList.add('paused');
+          collapsedState.textContent = 'PAUSED';
           statusEl.classList.add('paused');
           statusEl.textContent = 'PAUSED';
           resumeBtn.style.display = 'flex';
         } else {
           statusEl.classList.add('ready');
           statusEl.textContent = 'READY';
+          collapsedState.textContent = 'READY';
           detailsEl.textContent = '';
           inputStatusEl.innerHTML = '';
         }

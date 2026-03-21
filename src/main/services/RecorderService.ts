@@ -63,6 +63,7 @@ export interface FinishResult {
   videoPath: string;
   actionsPath: string;
   movementsPath: string;
+  micAudioPath: string;
   duration: number;
   recordingFolder: string;
 }
@@ -405,6 +406,7 @@ export class RecorderService {
       videoPath,
       actionsPath: response.actionsPath || '',
       movementsPath: response.movementsPath || '',
+      micAudioPath: response.micAudioPath || '',
       duration: response.duration || this.duration,
       recordingFolder: this.recordingFolder,
     };
@@ -932,6 +934,7 @@ export class RecorderService {
       videoPath: data.videoPath || '',
       actionsPath: data.actionsPath || '',
       movementsPath: data.movementsPath || '',
+      micAudioPath: data.micAudioPath || '',
       duration: data.duration || 0,
       recordingFolder: this.recordingFolder || '',
     };

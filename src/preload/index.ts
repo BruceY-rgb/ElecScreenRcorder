@@ -44,6 +44,7 @@ export interface FinishResult {
   videoPath: string;
   actionsPath: string;
   movementsPath: string;
+  micAudioPath: string;
   duration: number;
   recordingFolder: string;
 }
@@ -117,6 +118,9 @@ const electronAPI = {
   // Overlay mode control
   setOverlayMode: (mode: 'expanded' | 'collapsed'): Promise<void> =>
     ipcRenderer.invoke('overlay:setMode', mode),
+
+  setOverlayHoverSize: (expanded: boolean): Promise<void> =>
+    ipcRenderer.invoke('overlay:setHoverSize', expanded),
 
   onOverlayMode: (callback: (data: { mode: 'expanded' | 'collapsed' }) => void) => {
     ipcRenderer.on('overlay:mode', (_, data) => callback(data));

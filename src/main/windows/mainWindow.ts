@@ -41,7 +41,7 @@ export function createOverlayWindow(): BrowserWindow {
     x: screenWidth - overlayWidth - 20,
     y: 20,
     frame: false,
-    transparent: false,
+    transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
@@ -49,7 +49,6 @@ export function createOverlayWindow(): BrowserWindow {
     minimizable: false,
     maximizable: false,
     show: false,
-    backgroundColor: '#12121f',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,

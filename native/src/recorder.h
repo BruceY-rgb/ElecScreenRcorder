@@ -115,6 +115,11 @@ public:
     std::string getOutputPath() const;
 
     /**
+     * Get microphone audio file path (empty if mic not enabled)
+     */
+    std::string getMicAudioPath() const;
+
+    /**
      * Set callback for recording stop
      */
     using StopCallback = void(*)(void*);
@@ -156,6 +161,14 @@ private:
     int segmentCounter_ = 0;
     std::string finalOutputPath_;               // User-specified final output path
 
+    // Microphone separate FFmpeg process
+    PROCESS_INFORMATION micFfmpegProcess_ = {};
+    HANDLE micFfmpegStdin_ = nullptr;
+    std::vector<std::string> micSegmentPaths_;
+    std::string currentMicSegmentPath_;
+    int micSegmentCounter_ = 0;
+    std::string finalMicAudioPath_;
+
     // Check for hardware encoders
     EncoderType checkHardwareEncoders();
 
@@ -179,6 +192,14 @@ private:
 
     // Delete temporary segment files
     void cleanupSegmentFiles();
+
+    // Microphone FFmpeg process management
+    std::string buildMicFFmpegCommand(const RecordingConfig& config);
+    bool startMicFFmpeg(const std::string& command);
+    bool stopMicFFmpegGracefully(int timeoutMs = 10000);
+    std::string generateMicSegmentPath();
+    bool concatenateMicSegments();
+    void cleanupMicSegmentFiles();
 };
 
 // Global functions

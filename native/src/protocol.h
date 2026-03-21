@@ -97,6 +97,7 @@ std::string createSysInfoResponse(int screenWidth, int screenHeight, int refresh
 std::string createFinishResponse(const std::string& videoPath,
                                  const std::string& actionsPath,
                                  const std::string& movementsPath,
+                                 const std::string& micAudioPath = "",
                                  int64_t duration = 0);
 
 /**

@@ -42,6 +42,7 @@ export interface FinishResult {
   videoPath: string;
   actionsPath: string;
   movementsPath: string;
+  micAudioPath: string;
   duration: number;
   recordingFolder: string;
 }

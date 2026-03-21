@@ -433,6 +433,10 @@ public:
         std::string actionsPath = currentActionsPath_;
         std::string movementsPath = currentMovementsPath_;
 
+        // Get mic audio path before stopping (recorder clears state on stop but keeps finalMicAudioPath_)
+        Recorder* rec = getRecorder();
+        std::string micAudioPath = rec ? rec->getMicAudioPath() : "";
+
         // Stop mouse activity reporting first
         stopMouseActivityReporting();
 
@@ -445,7 +449,7 @@ public:
         recordingStartTime_ = 0;
         totalPausedDuration_ = 0;
 
-        sendResponse(createFinishResponse(videoPath, actionsPath, movementsPath));
+        sendResponse(createFinishResponse(videoPath, actionsPath, movementsPath, micAudioPath));
     }
 
     // Handle PAUSE command
