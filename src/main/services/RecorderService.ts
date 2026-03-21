@@ -464,6 +464,13 @@ export class RecorderService {
     };
   }
 
+  async getAudioDevices(): Promise<string[]> {
+    await this.connect();
+    const result = await this.sendCommandWithResponse('audio_devices', { action: 'get_audio_devices' });
+    console.log('[DEBUG RecorderService] audio devices:', JSON.stringify(result));
+    return result.devices || [];
+  }
+
   // Connect to native core (local process or remote socket)
   private async connect(): Promise<void> {
     if (this.config.mode === 'local') {

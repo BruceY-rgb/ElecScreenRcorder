@@ -47,15 +47,14 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
     remuxToMp4: false,
     captureAudio: true,
     captureMicrophone: false,
-    microphoneDevice: '外部麦克风 (Realtek(R) Audio)',
+    microphoneDevice: '',
     organizeByTimestamp: true,
   });
 
-  // 可用的麦克风设备列表
-  const microphoneOptions = [
-    { value: '外部麦克风 (Realtek(R) Audio)', label: '外部麦克风 (Realtek(R) Audio)' },
-    { value: '麦克风阵列 (适用于数字麦克风的英特尔® 智音技术)', label: '麦克风阵列 (英特尔® 智音技术)' },
-  ];
+  // 可用的麦克风设备列表 - 从 native core 动态获取
+  const [audioDevices, setAudioDevices] = useState<string[]>([]);
+  const [audioDevicesLoaded, setAudioDevicesLoaded] = useState(false);
+  const [audioDevicesError, setAudioDevicesError] = useState<string | null>(null);
 
   const [savePath, setSavePath] = useState('');
   const [setAsDefault, setSetAsDefault] = useState(false);
@@ -94,6 +93,25 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
       }
     });
   }, []);
+
+  // Fetch audio input devices when microphone checkbox is enabled
+  useEffect(() => {
+    if (config.captureMicrophone && !audioDevicesLoaded) {
+      window.electronAPI.getAudioDevices()
+        .then((devices) => {
+          setAudioDevices(devices);
+          setAudioDevicesLoaded(true);
+          // Auto-select first device if none selected
+          if (devices.length > 0 && !config.microphoneDevice) {
+            setConfig(prev => ({ ...prev, microphoneDevice: devices[0] }));
+          }
+        })
+        .catch((err) => {
+          console.error('[RecordingControls] Failed to get audio devices:', err);
+          setAudioDevicesError('Failed to enumerate audio devices');
+        });
+    }
+  }, [config.captureMicrophone, audioDevicesLoaded, config.microphoneDevice]);
 
   // Dynamic resolution options based on screen size
   const resolutionOptions = useMemo(() => {
@@ -484,15 +502,26 @@ function RecordingControls({ systemInfo }: RecordingControlsProps) {
             {config.captureMicrophone && (
               <div className="setting-row" style={{ marginLeft: '20px', marginTop: '8px' }}>
                 <span className="setting-label">Microphone Device</span>
-                <select
-                  className="setting-select"
-                  value={config.microphoneDevice || microphoneOptions[0].value}
-                  onChange={(e) => setConfig({ ...config, microphoneDevice: e.target.value })}
-                >
-                  {microphoneOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                {!audioDevicesLoaded && !audioDevicesError && (
+                  <span className="setting-select" style={{ padding: '4px 8px', fontSize: '12px' }}>Loading...</span>
+                )}
+                {audioDevicesError && (
+                  <span className="setting-select" style={{ padding: '4px 8px', fontSize: '12px', color: '#e74c3c' }}>Error</span>
+                )}
+                {audioDevicesLoaded && audioDevices.length === 0 && (
+                  <span className="setting-select" style={{ padding: '4px 8px', fontSize: '12px', color: '#e74c3c' }}>No devices found</span>
+                )}
+                {audioDevicesLoaded && audioDevices.length > 0 && (
+                  <select
+                    className="setting-select"
+                    value={config.microphoneDevice || audioDevices[0]}
+                    onChange={(e) => setConfig({ ...config, microphoneDevice: e.target.value })}
+                  >
+                    {audioDevices.map((device) => (
+                      <option key={device} value={device}>{device}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
 

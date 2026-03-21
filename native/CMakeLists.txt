@@ -24,6 +24,7 @@ set(SOURCES
     src/csv_writer.cpp
     src/recorder.cpp
     src/system_info.cpp
+    src/audio_device.cpp
 )
 
 set(HEADERS

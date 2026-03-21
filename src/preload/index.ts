@@ -95,6 +95,9 @@ const electronAPI = {
   checkInputState: (): Promise<InputState> =>
     ipcRenderer.invoke('recorder:checkInput'),
 
+  getAudioDevices: (): Promise<string[]> =>
+    ipcRenderer.invoke('recorder:getAudioDevices'),
+
   openVideo: (videoPath: string): Promise<void> =>
     ipcRenderer.invoke('recorder:openVideo', videoPath),
 

@@ -15,6 +15,7 @@ enum class CommandType {
     RESUME,
     SYSINFO,
     CHECK_INPUT,
+    GET_AUDIO_DEVICES,
     QUIT,
     UNKNOWN
 };
@@ -122,3 +123,9 @@ std::string createMouseActivityResponse(int eventsPerSecond);
  * Escape a string for JSON (handle special characters)
  */
 std::string jsonEscape(const std::string& s);
+
+/**
+ * Create an audio devices response JSON string
+ * @param devices Vector of device names
+ */
+std::string createAudioDevicesResponse(const std::vector<std::string>& devices);

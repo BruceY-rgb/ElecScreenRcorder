@@ -1,0 +1,3 @@
+D:/ElecScreenRcorder/native/build3/CMakeFiles/recorder_core.dir
+D:/ElecScreenRcorder/native/build3/CMakeFiles/ALL_BUILD.dir
+D:/ElecScreenRcorder/native/build3/CMakeFiles/ZERO_CHECK.dir

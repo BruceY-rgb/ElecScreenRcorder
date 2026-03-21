@@ -897,20 +897,32 @@ std::string Recorder::buildMicFFmpegCommand(const RecordingConfig& config) {
     cmd << "\"" << ffmpegPath_ << "\"";
     cmd << " -y";
     cmd << " -thread_queue_size 512";
-    // For microphone, use dshow to capture default audio input device
-    // If custom device is specified, use it; otherwise use default device
+
+    // For microphone, use dshow to capture audio input device
+    // Use "audio=device_name" format for dshow
     cmd << " -f dshow -i audio";
     if (!config.microphoneDevice.empty()) {
+        // Use double quotes around device name - FFmpeg dshow expects exact name
         cmd << "=\"" << config.microphoneDevice << "\"";
+    } else {
+        // Use default audio input device (empty string after audio=)
+        cmd << "=\"\"";
     }
+
+    // AAC encoding for output audio
     cmd << " -c:a aac";
     cmd << " -b:a " << config.audioBitrate << "k";
     cmd << " \"" << config.savePath << "\"";
-    return cmd.str();
+
+    std::string result = cmd.str();
+    writeNativeLog(("MIC_BUILD: FFmpeg mic command: " + result).c_str());
+    return result;
 }
 
 bool Recorder::startMicFFmpeg(const std::string& command) {
     writeNativeLog("MIC_F1: startMicFFmpeg() called");
+    writeNativeLog(("MIC_F1b: Mic device: '" + config_.microphoneDevice + "'").c_str());
+    writeNativeLog(("MIC_F1c: Using FFmpeg: " + ffmpegPath_).c_str());
 
     HANDLE hStderrRead = NULL, hStderrWrite = NULL;
     SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
@@ -964,35 +976,103 @@ bool Recorder::startMicFFmpeg(const std::string& command) {
 
     writeNativeLog(("MIC_F3: Mic FFmpeg PID: " + std::to_string(pi.dwProcessId)).c_str());
 
-    // Wait for mic FFmpeg to be ready (audio-only starts faster)
-    // Reuse the same wait logic but with the mic process handle temporarily
-    PROCESS_INFORMATION savedMain = ffmpegProcess_;
-    ffmpegProcess_ = pi;
-    bool ready = waitForFFmpegReady(hStderrRead, 5000);
-    ffmpegProcess_ = savedMain;
+    // Collect stderr output for detailed diagnosis
+    std::string stderrOutput;
+    bool seenDeviceList = false;
+
+    // Wait for mic FFmpeg to be ready with extended timeout and better error detection
+    const auto startTime = std::chrono::steady_clock::now();
+    const int timeoutMs = 5000;
+    std::string buffer;
+    DWORD exitCode = 0;
+
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime
+        ).count();
+
+        if (elapsed > timeoutMs) {
+            writeNativeLog("MIC_F_WARN: Mic FFmpeg timeout waiting for ready signal");
+            break;
+        }
+
+        DWORD bytesAvailable = 0;
+        if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+            char tempBuf[4096];
+            DWORD bytesRead = 0;
+            DWORD toRead = bytesAvailable < sizeof(tempBuf) ? bytesAvailable : sizeof(tempBuf);
+
+            if (ReadFile(hStderrRead, tempBuf, toRead, &bytesRead, NULL) && bytesRead > 0) {
+                std::string chunk(tempBuf, bytesRead);
+                stderrOutput += chunk;
+
+                // Log stderr chunks for debugging
+                writeNativeLog(("MIC_F_STDERR: " + chunk).c_str());
+
+                // Success: FFmpeg is ready
+                if (chunk.find("Press [q] to stop") != std::string::npos ||
+                    chunk.find("frame=") != std::string::npos) {
+                    writeNativeLog("MIC_F4: Mic FFmpeg is recording (ready signal detected)");
+                    CloseHandle(hStderrRead);
+                    return true;
+                }
+
+                // Check for specific dshow device errors
+                if (chunk.find("Invalid data found") != std::string::npos ||
+                    chunk.find("Unknown input format") != std::string::npos ||
+                    chunk.find("No such device") != std::string::npos ||
+                    chunk.find("cannot open") != std::string::npos ||
+                    chunk.find("The system cannot find") != std::string::npos) {
+                    writeNativeLog("MIC_F_ERROR: Mic FFmpeg device open failed");
+                    break;
+                }
+            }
+        }
+
+        // Check if process exited
+        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+            writeNativeLog(("MIC_F_ERROR: Mic FFmpeg exited early with code " + std::to_string(exitCode)).c_str());
+            // Read remaining stderr
+            if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+                char tempBuf[4096];
+                DWORD bytesRead = 0;
+                if (ReadFile(hStderrRead, tempBuf, sizeof(tempBuf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+                    tempBuf[bytesRead] = '\0';
+                    stderrOutput += tempBuf;
+                    writeNativeLog(("MIC_F_STDERR(final): " + std::string(tempBuf, bytesRead)).c_str());
+                }
+            }
+            break;
+        }
+
+        Sleep(20);
+    }
 
     CloseHandle(hStderrRead);
 
-    if (!ready) {
-        DWORD exitCode;
-        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
-            writeNativeLog("MIC_F_ERROR: Mic FFmpeg exited early");
-        } else {
-            writeNativeLog("MIC_F_WARN: Mic FFmpeg timeout - terminating");
-            TerminateProcess(pi.hProcess, 1);
-        }
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        memset(&micFfmpegProcess_, 0, sizeof(micFfmpegProcess_));
-        if (micFfmpegStdin_) {
-            CloseHandle(micFfmpegStdin_);
-            micFfmpegStdin_ = nullptr;
-        }
-        return false;
+    // Process failed - clean up
+    if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+        writeNativeLog(("MIC_F_ERROR: Mic FFmpeg exited with code " + std::to_string(exitCode)).c_str());
+    } else {
+        writeNativeLog("MIC_F_WARN: Mic FFmpeg timeout - terminating");
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 3000);
+    }
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    memset(&micFfmpegProcess_, 0, sizeof(micFfmpegProcess_));
+    if (micFfmpegStdin_) {
+        CloseHandle(micFfmpegStdin_);
+        micFfmpegStdin_ = nullptr;
     }
 
-    writeNativeLog("MIC_F4: Mic FFmpeg is recording!");
-    return true;
+    // Log diagnostic info
+    writeNativeLog(("MIC_F_DONE: Mic FFmpeg failed to start. Stderr length: " + std::to_string(stderrOutput.size())).c_str());
+    if (!stderrOutput.empty()) {
+        writeNativeLog(("MIC_F_DONE: Last stderr: " + stderrOutput.substr(0, 500)).c_str());
+    }
+
+    return false;
 }
 
 bool Recorder::stopMicFFmpegGracefully(int timeoutMs) {

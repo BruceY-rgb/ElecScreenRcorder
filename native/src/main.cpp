@@ -27,6 +27,10 @@
 #include "system_info.h"
 
 #include <iostream>
+#include <vector>
+
+// Forward declaration for audio device enumeration
+extern std::vector<std::string> getAudioInputDevices();
 #include <string>
 #include <memory>
 #include <vector>
@@ -571,6 +575,16 @@ public:
                           << " mouseButtonPressed=" << inputState.mouseButtonPressed
                           << " pressedKeyCount=" << inputState.pressedKeyCount << std::endl;
                 sendResponse(createInputStateResponse(inputState));
+                break;
+            }
+            case CommandType::GET_AUDIO_DEVICES: {
+                std::cerr << "[DEBUG] GET_AUDIO_DEVICES: Enumerating audio input devices" << std::endl;
+                std::vector<std::string> devices = getAudioInputDevices();
+                std::cerr << "[DEBUG] GET_AUDIO_DEVICES: Found " << devices.size() << " devices" << std::endl;
+                for (const auto& dev : devices) {
+                    std::cerr << "[DEBUG]   - " << dev << std::endl;
+                }
+                sendResponse(createAudioDevicesResponse(devices));
                 break;
             }
             case CommandType::QUIT:

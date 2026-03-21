@@ -1,0 +1,8 @@
+D:\ElecScreenRcorder\native\src\main.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\main.obj
+D:\ElecScreenRcorder\native\src\protocol.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\protocol.obj
+D:\ElecScreenRcorder\native\src\utils.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\utils.obj
+D:\ElecScreenRcorder\native\src\input_capture.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\input_capture.obj
+D:\ElecScreenRcorder\native\src\csv_writer.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\csv_writer.obj
+D:\ElecScreenRcorder\native\src\recorder.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\recorder.obj
+D:\ElecScreenRcorder\native\src\system_info.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\system_info.obj
+D:\ElecScreenRcorder\native\src\audio_device.cpp;D:\ElecScreenRcorder\native\build3\recorder_core.dir\Debug\audio_device.obj

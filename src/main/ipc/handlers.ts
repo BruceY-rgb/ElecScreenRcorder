@@ -219,4 +219,9 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
   ipcMain.handle('recorder:checkInput', async () => {
     return await recorderService.checkInputState();
   });
+
+  // Get available audio input devices (microphones)
+  ipcMain.handle('recorder:getAudioDevices', async () => {
+    return await recorderService.getAudioDevices();
+  });
 }

@@ -1,0 +1,10 @@
+^D:\ELECSCREENRCORDER\NATIVE\CMAKELISTS.TXT
+setlocal
+D:\bin\cmake.exe -SD:/ElecScreenRcorder/native -BD:/ElecScreenRcorder/native/build3 --check-stamp-file D:/ElecScreenRcorder/native/build3/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

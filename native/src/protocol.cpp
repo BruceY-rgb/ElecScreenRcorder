@@ -42,6 +42,7 @@ CommandType parseActionType(const json& j) {
     if (action == "resume") return CommandType::RESUME;
     if (action == "sysinfo") return CommandType::SYSINFO;
     if (action == "check_input") return CommandType::CHECK_INPUT;
+    if (action == "get_audio_devices") return CommandType::GET_AUDIO_DEVICES;
     if (action == "quit") return CommandType::QUIT;
 
     return CommandType::UNKNOWN;
@@ -193,5 +194,12 @@ std::string createMouseActivityResponse(int eventsPerSecond) {
     json j;
     j["type"] = "mouse_activity";
     j["eventsPerSecond"] = eventsPerSecond;
+    return j.dump();
+}
+
+std::string createAudioDevicesResponse(const std::vector<std::string>& devices) {
+    json j;
+    j["type"] = "audio_devices";
+    j["devices"] = devices;
     return j.dump();
 }
