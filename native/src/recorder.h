@@ -11,7 +11,10 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <thread>
 #include <windows.h>
+
+class AudioCapture;
 
 /**
  * Recording configuration
@@ -28,6 +31,7 @@ struct RecordingConfig {
     bool captureAudio = true;   // Enable system audio by default
     bool captureMicrophone = false;  // Enable microphone capture
     std::string microphoneDevice;     // Microphone device name (empty = default)
+    int64_t captureHwnd = 0;    // Window handle to capture (0 = desktop)
 };
 
 /**
@@ -168,6 +172,16 @@ private:
     std::string currentMicSegmentPath_;
     int micSegmentCounter_ = 0;
     std::string finalMicAudioPath_;
+
+    // WASAPI system audio capture (replaces VB-Audio Virtual Cable)
+    std::unique_ptr<AudioCapture> systemAudioCapture_;
+    std::string systemAudioPipeName_;
+    bool startSystemAudioCapture();
+    void stopSystemAudioCapture();
+
+    // ddagrab (Desktop Duplication API) support
+    bool ddagrabAvailable_ = false;
+    bool isDdagrabAvailable();
 
     // Check for hardware encoders
     EncoderType checkHardwareEncoders();

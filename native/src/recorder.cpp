@@ -7,6 +7,7 @@
 
 #include "recorder.h"
 #include "utils.h"
+#include "audio_capture.h"
 
 #include <windows.h>
 #include <iostream>
@@ -14,6 +15,9 @@
 #include <thread>
 #include <chrono>
 #include <fstream>
+#include <atomic>
+#include <cstdlib>
+#include <cstring>
 
 // Timeline log file
 static std::ofstream g_timelineLogFile;
@@ -57,6 +61,9 @@ Recorder::~Recorder() {
 }
 
 bool Recorder::initialize(const std::wstring& modulePath) {
+    // Initialize COM for WASAPI (may already be initialized by host)
+    initCOM();
+
     // Open timeline log file
     g_timelineLogFile.open("recording_timeline.log", std::ios::app);
     writeNativeLog("===== NATIVE CORE INITIALIZED =====");
@@ -80,11 +87,19 @@ bool Recorder::initialize(const std::wstring& modulePath) {
     }
 
     if (GetFileAttributesW(ffmpegExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        std::cerr << "[RECORDER] FFmpeg not found at: " << std::string(ffmpegExe.begin(), ffmpegExe.end()) << std::endl;
+        // Convert wstring to narrow for logging
+        int sz = WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), nullptr, 0, nullptr, nullptr);
+        std::string narrow(sz, 0);
+        WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), &narrow[0], sz, nullptr, nullptr);
+        std::cerr << "[RECORDER] FFmpeg not found at: " << narrow << std::endl;
         return false;
     }
 
-    ffmpegPath_ = std::string(ffmpegExe.begin(), ffmpegExe.end());
+    {
+        int sz = WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), nullptr, 0, nullptr, nullptr);
+        ffmpegPath_.resize(sz);
+        WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), &ffmpegPath_[0], sz, nullptr, nullptr);
+    }
     std::cout << "[RECORDER] FFmpeg path: " << ffmpegPath_ << std::endl;
 
     // Check for hardware encoders
@@ -100,13 +115,138 @@ bool Recorder::initialize(const std::wstring& modulePath) {
     }
     std::cout << std::endl;
 
+    // Check ddagrab availability
+    ddagrabAvailable_ = isDdagrabAvailable();
+    std::cout << "[RECORDER] ddagrab (DXGI Desktop Duplication): "
+              << (ddagrabAvailable_ ? "available" : "not available (will use gdigrab)")
+              << std::endl;
+
     return true;
 }
 
+// Helper: run an FFmpeg command and capture stdout+stderr, with timeout
+static std::string runFFmpegProbe(const std::string& ffmpegPath, const std::string& args, int timeoutMs = 3000) {
+    std::string command = "\"" + ffmpegPath + "\" " + args;
+    std::string output;
+
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) return output;
+
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+    si.hStdInput = nullptr;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessA(nullptr, const_cast<char*>(command.c_str()), nullptr, nullptr,
+                        TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(hReadPipe);
+        CloseHandle(hWritePipe);
+        return output;
+    }
+
+    CloseHandle(hWritePipe);
+
+    // Read output with timeout
+    auto startTime = std::chrono::steady_clock::now();
+    char buffer[4096];
+    DWORD bytesRead;
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        if (elapsed > timeoutMs) break;
+
+        DWORD available = 0;
+        if (!PeekNamedPipe(hReadPipe, nullptr, 0, nullptr, &available, nullptr) || available == 0) {
+            if (WaitForSingleObject(pi.hProcess, 50) == WAIT_OBJECT_0) {
+                // Process ended, read remaining
+                PeekNamedPipe(hReadPipe, nullptr, 0, nullptr, &available, nullptr);
+                if (available == 0) break;
+            }
+            continue;
+        }
+        if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
+            buffer[bytesRead] = '\0';
+            output += buffer;
+        }
+    }
+
+    TerminateProcess(pi.hProcess, 0);
+    WaitForSingleObject(pi.hProcess, 1000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(hReadPipe);
+    return output;
+}
+
+// Test if a specific hardware encoder actually works on this system
+static bool testEncoderWorks(const std::string& ffmpegPath, const std::string& encoderName) {
+    // Encode a single black frame — if the encoder opens successfully, it works
+    std::string args = "-hide_banner -f lavfi -i color=black:s=64x64:d=0.1 -frames:v 1"
+                       " -c:v " + encoderName + " -f null NUL";
+    std::string output = runFFmpegProbe(ffmpegPath, args, 5000);
+    // Check for success indicators (encoded at least 1 frame) and no fatal errors
+    bool hasError = output.find("Error while opening encoder") != std::string::npos ||
+                    output.find("Driver does not support") != std::string::npos ||
+                    output.find("Cannot load") != std::string::npos ||
+                    output.find("No capable devices found") != std::string::npos;
+    bool hasSuccess = output.find("frame=") != std::string::npos ||
+                      output.find("video:") != std::string::npos;
+    return hasSuccess && !hasError;
+}
+
 EncoderType Recorder::checkHardwareEncoders() {
-    // Skip hardware encoder detection for now - just use software x264
-    // This prevents potential hangs when spawning ffmpeg
+    // First check which encoders are compiled in
+    std::string output = runFFmpegProbe(ffmpegPath_, "-hide_banner -encoders");
+    if (output.empty()) {
+        std::cerr << "[RECORDER] Failed to probe encoders, defaulting to x264" << std::endl;
+        return EncoderType::X264;
+    }
+
+    // Then actually test each available encoder with the current GPU driver
+    // Priority: NVENC > AMF > QSV > X264
+    if (output.find("h264_nvenc") != std::string::npos) {
+        std::cerr << "[RECORDER] Testing h264_nvenc..." << std::endl;
+        if (testEncoderWorks(ffmpegPath_, "h264_nvenc")) {
+            std::cerr << "[RECORDER] h264_nvenc works!" << std::endl;
+            return EncoderType::NVENC;
+        }
+        std::cerr << "[RECORDER] h264_nvenc not supported by current GPU driver" << std::endl;
+    }
+    if (output.find("h264_amf") != std::string::npos) {
+        std::cerr << "[RECORDER] Testing h264_amf..." << std::endl;
+        if (testEncoderWorks(ffmpegPath_, "h264_amf")) {
+            std::cerr << "[RECORDER] h264_amf works!" << std::endl;
+            return EncoderType::AMF;
+        }
+        std::cerr << "[RECORDER] h264_amf not supported by current GPU driver" << std::endl;
+    }
+    if (output.find("h264_qsv") != std::string::npos) {
+        std::cerr << "[RECORDER] Testing h264_qsv..." << std::endl;
+        if (testEncoderWorks(ffmpegPath_, "h264_qsv")) {
+            std::cerr << "[RECORDER] h264_qsv works!" << std::endl;
+            return EncoderType::QSV;
+        }
+        std::cerr << "[RECORDER] h264_qsv not supported by current GPU driver" << std::endl;
+    }
+
+    std::cerr << "[RECORDER] No hardware encoder available, using x264" << std::endl;
     return EncoderType::X264;
+}
+
+bool Recorder::isDdagrabAvailable() {
+    std::string output = runFFmpegProbe(ffmpegPath_, "-hide_banner -filters");
+    if (output.find("ddagrab") != std::string::npos) {
+        return true;
+    }
+    return false;
 }
 
 std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
@@ -114,7 +254,6 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 
     cmd << "\"" << ffmpegPath_ << "\"";
 
-    // Debug: log config values received
     std::cerr << "[RECORDER] buildFFmpegCommand: width=" << config.width
               << " height=" << config.height
               << " fps=" << config.fps
@@ -122,91 +261,125 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
               << " captureAudio=" << config.captureAudio
               << " captureMicrophone=" << config.captureMicrophone
               << " separateAudio=" << config.separateAudio
-              << " audioBitrate=" << config.audioBitrate << std::endl;
+              << " audioBitrate=" << config.audioBitrate
+              << " ddagrab=" << ddagrabAvailable_
+              << " captureHwnd=" << config.captureHwnd << std::endl;
 
     // Global options
-    cmd << " -y";  // Overwrite output
-    // Increase real-time buffer for smoother capture
+    cmd << " -y";
     cmd << " -rtbufsize 100M";
 
-    // ===== INPUTS FIRST =====
-    // Video input - Windows screen capture using GDI
-    cmd << " -f gdigrab";
-    cmd << " -framerate " << config.fps;
-    cmd << " -offset_x 0 -offset_y 0";
-    cmd << " -draw_mouse 1";
-    cmd << " -video_size " << config.width << "x" << config.height;
-    cmd << " -i desktop";
-    cmd << " -use_wallclock_as_timestamps 0";
-    // Generate PTS for video to match audio
-    cmd << " -fflags +genpts";
+    // ===== VIDEO INPUT =====
+    // Use ddagrab (DXGI Desktop Duplication) when available and not doing window capture.
+    // ddagrab respects SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) so overlay is hidden.
+    // Fallback to gdigrab for window capture or when ddagrab is unavailable.
+    bool useDdagrab = ddagrabAvailable_ && (config.captureHwnd == 0);
 
-    // Count audio inputs
-    int audioInputCount = 0;
-
-    // System audio input - DISABLED (no virtual audio device available)
-    // To enable: install VB-Audio Virtual Cable and use "audio=CABLE Input (VB-Audio Virtual Cable)"
-    // if (config.captureAudio) {
-    //     cmd << " -f dshow -i audio=\"CABLE Input (VB-Audio Virtual Cable)\"";
-    //     audioInputCount++;
-    // }
-
-    // Microphone is now recorded to a separate file via a dedicated FFmpeg process.
-    // It is no longer mixed into the video file.
-
-    // ===== OUTPUT OPTIONS AFTER ALL INPUTS =====
-    // Video encoder
-    cmd << " -c:v ";
-    switch (encoderType_) {
-        case EncoderType::NVENC:
-            cmd << "h264_nvenc";
-            cmd << " -preset p7";
-            cmd << " -tune hq";
-            break;
-        case EncoderType::AMF:
-            cmd << "h264_amf";
-            cmd << " -quality speed";
-            break;
-        case EncoderType::QSV:
-            cmd << "h264_qsv";
-            break;
-        default:
-            cmd << "libx264";
-            cmd << " -preset ultrafast";
-            cmd << " -tune zerolatency";
+    if (useDdagrab) {
+        cmd << " -f lavfi -i \"ddagrab=output_idx=0"
+            << ":framerate=" << config.fps
+            << ":draw_mouse=1"
+            << ":video_size=" << config.width << "x" << config.height
+            << "\"";
+        std::cerr << "[RECORDER] Using ddagrab (DXGI) capture" << std::endl;
+    } else {
+        cmd << " -f gdigrab";
+        cmd << " -framerate " << config.fps;
+        cmd << " -draw_mouse 1";
+        if (config.captureHwnd != 0) {
+            cmd << " -i hwnd=" << config.captureHwnd;
+            std::cerr << "[RECORDER] Using gdigrab hwnd capture: " << config.captureHwnd << std::endl;
+        } else {
+            cmd << " -offset_x 0 -offset_y 0";
+            cmd << " -video_size " << config.width << "x" << config.height;
+            cmd << " -i desktop";
+            std::cerr << "[RECORDER] Using gdigrab desktop capture" << std::endl;
+        }
     }
 
-    // Video bitrate options
+    cmd << " -use_wallclock_as_timestamps 0";
+    cmd << " -fflags +genpts";
+
+    // ===== AUDIO INPUT =====
+    int audioInputCount = 0;
+
+    // System audio via WASAPI named pipe (replaces VB-Audio Virtual Cable)
+    if (config.captureAudio && systemAudioCapture_) {
+        std::string pipePath = systemAudioCapture_->getPipePath();
+        std::string fmt = systemAudioCapture_->getFFmpegFormatString();
+        int sampleRate = systemAudioCapture_->getSampleRate();
+        int channels = systemAudioCapture_->getChannels();
+
+        cmd << " -f " << fmt;
+        cmd << " -ar " << sampleRate;
+        cmd << " -ac " << channels;
+        cmd << " -i \"" << pipePath << "\"";
+        audioInputCount++;
+        std::cerr << "[RECORDER] System audio via WASAPI pipe: " << pipePath
+                  << " fmt=" << fmt << " ar=" << sampleRate << " ac=" << channels << std::endl;
+    }
+
+    // Microphone is recorded to a separate file via a dedicated FFmpeg process.
+
+    // ===== VIDEO ENCODER =====
+    if (useDdagrab && encoderType_ != EncoderType::X264) {
+        // Hardware encoder: ddagrab D3D11 textures can be encoded directly
+        cmd << " -c:v ";
+        switch (encoderType_) {
+            case EncoderType::NVENC:
+                cmd << "h264_nvenc -preset p7 -tune hq";
+                break;
+            case EncoderType::AMF:
+                cmd << "h264_amf -quality speed";
+                break;
+            case EncoderType::QSV:
+                cmd << "h264_qsv";
+                break;
+            default:
+                break;
+        }
+    } else if (useDdagrab) {
+        // Software encoder with ddagrab: need hwdownload to get frames from GPU
+        cmd << " -vf hwdownload,format=bgra,format=yuv420p";
+        cmd << " -c:v libx264 -preset ultrafast -tune zerolatency";
+    } else {
+        // gdigrab path: standard software/hardware encoder
+        cmd << " -c:v ";
+        switch (encoderType_) {
+            case EncoderType::NVENC:
+                cmd << "h264_nvenc -preset p7 -tune hq";
+                break;
+            case EncoderType::AMF:
+                cmd << "h264_amf -quality speed";
+                break;
+            case EncoderType::QSV:
+                cmd << "h264_qsv";
+                break;
+            default:
+                cmd << "libx264 -preset ultrafast -tune zerolatency";
+        }
+    }
+
+    // Video bitrate
     cmd << " -b:v " << config.videoBitrate << "k";
     cmd << " -maxrate " << (config.videoBitrate * 1.5) << "k";
     cmd << " -bufsize " << (config.videoBitrate * 2) << "k";
 
-    // Audio encoder (if any audio input enabled)
+    // Audio encoder
     if (audioInputCount > 0) {
         cmd << " -c:a aac";
         cmd << " -b:a " << config.audioBitrate << "k";
-        // Use multiple threads for audio encoding to reduce CPU load
         cmd << " -threads 2";
     }
 
-    // Map inputs based on configuration
-    if (audioInputCount == 2 && config.separateAudio) {
-        // Separate audio tracks: system audio + microphone as separate streams
-        // Map: video from input 0, system audio from input 1, microphone from input 2
-        cmd << " -map 0:v -map 1:a -map 2:a";
-    } else if (audioInputCount == 2) {
-        // Mix both audio sources into one track
-        cmd << " -filter_complex \"[1:a][2:a]amix=inputs=2:duration=longest[aout]\"";
-        cmd << " -map 0:v -map \"[aout]\"";
-    } else if (audioInputCount == 1) {
-        // Single audio source
+    // Stream mapping
+    if (audioInputCount == 1) {
         cmd << " -map 0:v -map 1:a";
     } else {
-        // Video only
         cmd << " -map 0:v";
     }
 
-    // Timestamp control - ensure video starts at 0
+    // Timestamp control
     cmd << " -avoid_negative_ts make_zero";
     cmd << " -vsync cfr";
 
@@ -219,6 +392,10 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
     const auto startTime = std::chrono::steady_clock::now();
     std::string buffer;
+    bool sawReadySignal = false;
+    auto readyTime = std::chrono::steady_clock::now();
+    // After seeing "Press [q] to stop", wait up to 500ms more to check for encoder errors
+    const int postReadyCheckMs = 500;
 
     while (true) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -230,6 +407,17 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
             return false;
         }
 
+        // If we saw the ready signal, check if enough time passed without errors
+        if (sawReadySignal) {
+            auto sinceReady = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - readyTime
+            ).count();
+            if (sinceReady > postReadyCheckMs) {
+                // Passed the post-ready check window — FFmpeg is truly recording
+                return true;
+            }
+        }
+
         DWORD bytesAvailable = 0;
         if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
             char tempBuf[4096];
@@ -239,24 +427,31 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
             if (ReadFile(hStderrRead, tempBuf, toRead, &bytesRead, NULL) && bytesRead > 0) {
                 buffer.append(tempBuf, bytesRead);
 
-                // Log what FFmpeg is saying (for debugging)
                 std::string chunk(tempBuf, bytesRead);
                 writeNativeLog(("F_STDERR: " + chunk).c_str());
 
-                // Success: FFmpeg is ready to record
-                if (buffer.find("Press [q] to stop") != std::string::npos ||
-                    buffer.find("frame=") != std::string::npos) {
-                    return true;
-                }
-
-                // Failure: FFmpeg encountered an error
+                // Failure: FFmpeg encountered an error (check BEFORE success)
                 if (buffer.find("Error opening input") != std::string::npos ||
                     buffer.find("Unknown input format") != std::string::npos ||
                     buffer.find("Cannot open") != std::string::npos ||
                     buffer.find("No such file or directory") != std::string::npos ||
-                    buffer.find("Immediate exit requested") != std::string::npos) {
+                    buffer.find("Immediate exit requested") != std::string::npos ||
+                    buffer.find("Failed to create output duplicator") != std::string::npos ||
+                    buffer.find("Error while opening encoder") != std::string::npos ||
+                    buffer.find("Driver does not support") != std::string::npos ||
+                    buffer.find("Terminating thread with return code") != std::string::npos ||
+                    (buffer.find("ddagrab") != std::string::npos && buffer.find("Error") != std::string::npos)) {
                     writeNativeLog("F_ERROR: FFmpeg reported an error in stderr");
                     return false;
+                }
+
+                // Success signal: mark ready but keep checking for errors
+                if (!sawReadySignal &&
+                    (buffer.find("Press [q] to stop") != std::string::npos ||
+                     buffer.find("frame=") != std::string::npos)) {
+                    sawReadySignal = true;
+                    readyTime = std::chrono::steady_clock::now();
+                    writeNativeLog("F_READY: Saw ready signal, waiting to confirm no errors...");
                 }
             }
         } else {
@@ -407,8 +602,14 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     currentMicSegmentPath_.clear();
     finalMicAudioPath_.clear();
 
+    // Start WASAPI system audio capture via named pipe
+    if (config.captureAudio) {
+        if (!startSystemAudioCapture()) {
+            std::cerr << "[RECORDER] Warning: WASAPI system audio capture failed, continuing without" << std::endl;
+        }
+    }
+
     if (config.captureMicrophone) {
-        // Derive mic audio path from video path: recording.mkv -> recording_mic.m4a
         std::string basePath = config.savePath;
         size_t dotPos = basePath.rfind('.');
         if (dotPos != std::string::npos) {
@@ -423,7 +624,7 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     std::cerr << "[RECORDER] startRecording: segment=" << currentSegmentPath_ << std::endl;
     std::cerr << "[RECORDER] startRecording: width=" << config.width << " height=" << config.height << " fps=" << config.fps << std::endl;
 
-    // Build FFmpeg command using segment path instead of final path
+    // Build FFmpeg command using segment path
     RecordingConfig segConfig = config;
     segConfig.savePath = currentSegmentPath_;
     std::string command = buildFFmpegCommand(segConfig);
@@ -434,25 +635,36 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     writeNativeLog((std::string("N3: startFFmpeg() returned: ") + (started ? "true" : "false")).c_str());
     std::cerr << "[RECORDER] startRecording: startFFmpeg returned " << started << std::endl;
 
-    // If failed and audio was enabled, try without system audio only (keep microphone)
-    if (!started && (config.captureAudio || config.captureMicrophone)) {
+    // If ddagrab failed, try falling back to gdigrab
+    if (!started && ddagrabAvailable_ && config.captureHwnd == 0) {
+        std::cerr << "[RECORDER] startRecording: ddagrab failed, falling back to gdigrab" << std::endl;
+        writeNativeLog("N3_FALLBACK: ddagrab failed, retrying with gdigrab");
+        ddagrabAvailable_ = false;
+        segConfig.savePath = currentSegmentPath_;
+        command = buildFFmpegCommand(segConfig);
+        started = startFFmpeg(command);
+    }
+
+    // If failed and audio was enabled, try without system audio
+    if (!started && config.captureAudio) {
         std::cerr << "[RECORDER] startRecording: FFmpeg failed with audio, retrying without system audio" << std::endl;
+        stopSystemAudioCapture();
         RecordingConfig noSysAudioConfig = config;
-        noSysAudioConfig.captureAudio = false;  // Disable system audio only
-        // Keep captureMicrophone as-is (do not disable)
+        noSysAudioConfig.captureAudio = false;
         noSysAudioConfig.savePath = currentSegmentPath_;
         command = buildFFmpegCommand(noSysAudioConfig);
         std::cerr << "[RECORDER] startRecording: Retry FFmpeg command: " << command << std::endl;
         started = startFFmpeg(command);
         if (started) {
             config_ = noSysAudioConfig;
-            config_.savePath = finalOutputPath_;  // Keep original final path in config_
+            config_.savePath = finalOutputPath_;
             std::cerr << "[RECORDER] startRecording: Recording started successfully (without system audio)" << std::endl;
         }
     }
 
     if (!started) {
         std::cerr << "[RECORDER] startRecording: startFFmpeg failed" << std::endl;
+        stopSystemAudioCapture();
         return false;
     }
 
@@ -489,6 +701,9 @@ void Recorder::stopRecording() {
         writeNativeLog(("S2: Saved final segment: " + currentSegmentPath_).c_str());
     }
     // If PAUSED, FFmpeg is already stopped and segment already saved in pauseRecording()
+
+    // Stop WASAPI system audio capture (after FFmpeg stopped to avoid broken pipe)
+    stopSystemAudioCapture();
 
     // Stop mic FFmpeg if running
     if (state_ == RecordingState::RECORDING && micFfmpegProcess_.hProcess) {
@@ -578,6 +793,9 @@ void Recorder::pauseRecording() {
     segmentPaths_.push_back(currentSegmentPath_);
     writeNativeLog(("P2: Segment saved: " + currentSegmentPath_).c_str());
 
+    // Stop WASAPI system audio capture
+    stopSystemAudioCapture();
+
     // Stop mic FFmpeg and save mic segment
     if (!finalMicAudioPath_.empty() && micFfmpegProcess_.hProcess) {
         writeNativeLog("P2_MIC: Stopping mic FFmpeg for pause");
@@ -608,6 +826,13 @@ void Recorder::resumeRecording() {
     std::cerr << "[RECORDER] resumeRecording() - new segment: " << currentSegmentPath_ << std::endl;
     writeNativeLog(("R2: New segment path: " + currentSegmentPath_).c_str());
 
+    // Restart WASAPI system audio capture for the new segment
+    if (config_.captureAudio) {
+        if (!startSystemAudioCapture()) {
+            std::cerr << "[RECORDER] resumeRecording: WASAPI restart failed" << std::endl;
+        }
+    }
+
     // Build FFmpeg command for the new segment
     RecordingConfig segConfig = config_;
     segConfig.savePath = currentSegmentPath_;
@@ -617,12 +842,12 @@ void Recorder::resumeRecording() {
     bool started = startFFmpeg(command);
 
     // If failed and audio was enabled, retry without audio
-    if (!started && (config_.captureAudio || config_.captureMicrophone)) {
+    if (!started && config_.captureAudio) {
         std::cerr << "[RECORDER] resumeRecording() - FFmpeg failed with audio, retrying without" << std::endl;
         writeNativeLog("R3: FFmpeg failed with audio, retrying without audio");
+        stopSystemAudioCapture();
         RecordingConfig noAudioConfig = config_;
         noAudioConfig.captureAudio = false;
-        noAudioConfig.captureMicrophone = false;
         noAudioConfig.savePath = currentSegmentPath_;
         command = buildFFmpegCommand(noAudioConfig);
         started = startFFmpeg(command);
@@ -631,8 +856,7 @@ void Recorder::resumeRecording() {
     if (!started) {
         std::cerr << "[RECORDER] resumeRecording() - FAILED to start FFmpeg" << std::endl;
         writeNativeLog("R_ERROR: Failed to start new FFmpeg segment, staying PAUSED");
-        std::cerr << "[RECORDER] resumeRecording: Failed to start new segment" << std::endl;
-        // Stay in PAUSED state - don't change state
+        stopSystemAudioCapture();
         return;
     }
 
@@ -1222,6 +1446,51 @@ void Recorder::cleanupMicSegmentFiles() {
             writeNativeLog(("MIC_CLEANUP_WARN: Failed to remove " + seg).c_str());
         }
     }
+}
+
+// ===== WASAPI System Audio Capture =====
+
+bool Recorder::startSystemAudioCapture() {
+    // Generate a unique pipe name for this recording segment
+    systemAudioPipeName_ = "screencraft_audio_" + std::to_string(GetCurrentProcessId())
+                           + "_" + std::to_string(segmentCounter_);
+
+    systemAudioCapture_ = std::make_unique<AudioCapture>(true);  // true = loopback
+
+    if (!systemAudioCapture_->initialize()) {
+        writeNativeLog("WASAPI: Failed to initialize system audio capture");
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    if (!systemAudioCapture_->createNamedPipe(systemAudioPipeName_)) {
+        writeNativeLog("WASAPI: Failed to create named pipe");
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    // Audio data is written directly to the named pipe inside AudioCapture::captureThread()
+
+    // Start WASAPI capture BEFORE FFmpeg (so pipe is ready when FFmpeg connects)
+    if (!systemAudioCapture_->start()) {
+        writeNativeLog("WASAPI: Failed to start capture");
+        systemAudioCapture_->closeNamedPipe();
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    writeNativeLog(("WASAPI: System audio capture started, pipe: " + systemAudioCapture_->getPipePath()).c_str());
+    return true;
+}
+
+void Recorder::stopSystemAudioCapture() {
+    if (systemAudioCapture_) {
+        systemAudioCapture_->stop();
+        systemAudioCapture_->closeNamedPipe();
+        systemAudioCapture_.reset();
+        writeNativeLog("WASAPI: System audio capture stopped");
+    }
+    systemAudioPipeName_.clear();
 }
 
 // Global functions

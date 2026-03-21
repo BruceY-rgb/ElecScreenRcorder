@@ -17,6 +17,7 @@ enum class CommandType {
     CHECK_INPUT,
     GET_AUDIO_DEVICES,
     QUIT,
+    EXCLUDE_FROM_CAPTURE,
     UNKNOWN
 };
 
@@ -45,6 +46,7 @@ struct StartConfig {
     bool captureAudio = true;        // Capture system audio
     bool captureMicrophone = false;  // Capture microphone
     std::string microphoneDevice;   // Microphone device name
+    int64_t captureHwnd = 0;         // Window handle to capture (0 = desktop)
 };
 
 /**
@@ -54,6 +56,7 @@ struct Command {
     CommandType type = CommandType::UNKNOWN;
     StartConfig config;
     std::string rawAction;
+    int64_t hwnd = 0;
 };
 
 /**

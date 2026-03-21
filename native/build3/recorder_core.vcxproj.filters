@@ -25,6 +25,9 @@
     <ClCompile Include="D:\ElecScreenRcorder\native\src\audio_device.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D:\ElecScreenRcorder\native\src\audio_capture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="D:\ElecScreenRcorder\native\src\protocol.h">
@@ -43,6 +46,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="D:\ElecScreenRcorder\native\src\system_info.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\ElecScreenRcorder\native\src\audio_capture.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -44,6 +44,7 @@ CommandType parseActionType(const json& j) {
     if (action == "check_input") return CommandType::CHECK_INPUT;
     if (action == "get_audio_devices") return CommandType::GET_AUDIO_DEVICES;
     if (action == "quit") return CommandType::QUIT;
+    if (action == "exclude_from_capture") return CommandType::EXCLUDE_FROM_CAPTURE;
 
     return CommandType::UNKNOWN;
 }
@@ -127,6 +128,14 @@ std::optional<Command> parseCommand(const std::string& input) {
         if (config.contains("microphoneDevice") && config["microphoneDevice"].is_string()) {
             cmd.config.microphoneDevice = config["microphoneDevice"].get<std::string>();
         }
+        if (config.contains("captureHwnd") && config["captureHwnd"].is_number()) {
+            cmd.config.captureHwnd = config["captureHwnd"].get<int64_t>();
+        }
+    }
+
+    // Parse hwnd for EXCLUDE_FROM_CAPTURE command
+    if (j.contains("hwnd") && j["hwnd"].is_number()) {
+        cmd.hwnd = j["hwnd"].get<int64_t>();
     }
 
     return cmd;

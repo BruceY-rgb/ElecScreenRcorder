@@ -25,6 +25,7 @@ set(SOURCES
     src/recorder.cpp
     src/system_info.cpp
     src/audio_device.cpp
+    src/audio_capture.cpp
 )
 
 set(HEADERS
@@ -34,6 +35,7 @@ set(HEADERS
     src/csv_writer.h
     src/recorder.h
     src/system_info.h
+    src/audio_capture.h
 )
 
 # Create executable
@@ -52,6 +54,9 @@ if(WIN32)
         advapi32.lib
         kernel32.lib
         Shcore.lib
+        # WASAPI audio capture
+        ole32.lib
+        uuid.lib
     )
 
     # Set output directory (force all configs to same dir, no Release/Debug subdirectory)

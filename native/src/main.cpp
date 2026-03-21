@@ -28,6 +28,7 @@
 
 #include <iostream>
 #include <vector>
+#include <cstdlib>
 
 // Forward declaration for audio device enumeration
 extern std::vector<std::string> getAudioInputDevices();
@@ -371,6 +372,17 @@ public:
         obsConfig.captureAudio = config.captureAudio;
         obsConfig.captureMicrophone = config.captureMicrophone;
         obsConfig.microphoneDevice = config.microphoneDevice;
+        obsConfig.captureHwnd = config.captureHwnd;
+
+        // Override captureHwnd from environment variable for testing
+        const char* envHwnd = std::getenv("RECORDER_CAPTURE_HWND");
+        if (envHwnd && strlen(envHwnd) > 0) {
+            int64_t hwnd = std::strtoll(envHwnd, nullptr, 0);
+            if (hwnd > 0) {
+                obsConfig.captureHwnd = hwnd;
+                std::cerr << "[DEBUG] Using captureHwnd from env: " << hwnd << std::endl;
+            }
+        }
 
         Recorder* recorder = getRecorder();
         if (!recorder || !recorder->startRecording(obsConfig)) {
@@ -595,6 +607,27 @@ public:
                 state_ = AppState::STOPPED;
                 sendResponse(createStatusResponse("stopped"));
                 break;
+            case CommandType::EXCLUDE_FROM_CAPTURE: {
+                HWND hwnd = reinterpret_cast<HWND>(cmd.hwnd);
+                std::cerr << "[DEBUG] EXCLUDE_FROM_CAPTURE: hwnd=" << (void*)hwnd << std::endl;
+
+                // Check if window is valid
+                BOOL isWindow = IsWindow(hwnd);
+                std::cerr << "[DEBUG] IsWindow=" << isWindow << std::endl;
+
+                BOOL result = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+                DWORD error = GetLastError();
+
+                std::cerr << "[DEBUG] SetWindowDisplayAffinity result=" << result
+                          << " error=" << error << std::endl;
+
+                if (result) {
+                    sendResponse(createStatusResponse("ok"));
+                } else {
+                    sendResponse(createErrorResponse("Failed to set window affinity, error: " + std::to_string(error)));
+                }
+                break;
+            }
             default:
                 sendResponse(createErrorResponse("Unknown command: " + cmd.rawAction));
                 break;
