@@ -1,6 +1,12 @@
 import { app, BrowserWindow, screen } from 'electron';
 import path from 'path';
 
+function getIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '../../build/icon.png');
+}
+
 export function createMainWindow(): BrowserWindow {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
 
@@ -9,7 +15,8 @@ export function createMainWindow(): BrowserWindow {
     height: Math.min(800, height * 0.8),
     minWidth: 800,
     minHeight: 600,
-    title: 'Screen Recording Tool',
+    title: 'ScreenCraft',
+    icon: getIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -66,6 +73,19 @@ export function createOverlayWindow(): BrowserWindow {
   } else {
     overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay.html'));
   }
+
+  // Exclude overlay from screen capture using Electron's built-in API.
+  // setContentProtection(true) calls SetWindowDisplayAffinity(WDA_MONITOR) internally.
+  // Combined with ddagrab (DXGI Desktop Duplication), the overlay becomes invisible in recordings.
+  // This is more reliable than the PowerShell approach which fails with ACCESS_DENIED on layered windows.
+  overlayWindow.once('ready-to-show', () => {
+    try {
+      overlayWindow.setContentProtection(true);
+      console.log('[Overlay] Content protection enabled (setContentProtection)');
+    } catch (err) {
+      console.error('[Overlay] setContentProtection failed:', err);
+    }
+  });
 
   return overlayWindow;
 }

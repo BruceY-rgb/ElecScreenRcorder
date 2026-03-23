@@ -6,8 +6,11 @@ node_modules/
 # Build outputs
 dist/
 build/
+!build/icon.ico
+!build/icon.png
 out/
 release/
+release-new/
 release-portable/
 
 # Native build outputs

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { spawn } from 'child_process';
 import { registerHandlers } from './ipc/handlers';
 import { RecorderService, RecorderConfig } from './services/RecorderService';
 import { createMainWindow, createOverlayWindow } from './windows/mainWindow';

@@ -217,7 +217,7 @@ export class RecorderService {
   }
 
   // Send command to native core (handles both local and remote)
-  private sendCommand(command: object): void {
+  public sendCommand(command: object): void {
     const json = JSON.stringify(command) + '\n';
 
     try {
