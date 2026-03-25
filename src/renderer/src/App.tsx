@@ -1,6 +1,7 @@
 import { useRecorder, SystemInfo } from './hooks/useRecorder';
 import RecordingControls from './components/RecordingControls';
 import SystemStatus from './components/SystemStatus';
+import LogPanel from './components/LogPanel';
 
 function App() {
   const { error, systemInfo } = useRecorder();
@@ -17,6 +18,7 @@ function App() {
       </main>
 
       <SystemStatus systemInfo={systemInfo} />
+      <LogPanel />
     </div>
   );
 }

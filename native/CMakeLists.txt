@@ -6,6 +6,21 @@ project(recorder_core VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ========== 静态链接 VC++ Runtime ==========
+# 解决在其他机器上缺少 msvcp140.dll 等 DLL 的问题
+if(MSVC)
+    # 方法1: 使用 CMake 3.15+ 的新特性（推荐）
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+    # 方法2: 同时设置编译器标志（双重保险，确保所有配置都使用 /MT）
+    add_compile_options(
+        $<$<CONFIG:Release>:/MT>
+        $<$<CONFIG:Debug>:/MTd>
+        $<$<CONFIG:RelWithDebInfo>:/MT>
+        $<$<CONFIG:MinSizeRel>:/MT>
+    )
+endif()
+
 # Windows-specific settings
 if(WIN32)
     add_definitions(-D_UNICODE)

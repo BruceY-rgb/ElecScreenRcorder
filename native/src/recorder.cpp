@@ -10,6 +10,7 @@
 #include "audio_capture.h"
 
 #include <windows.h>
+#include <shlobj.h>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -45,11 +46,23 @@ static void writeNativeLog(const char* message) {
 // Global recorder instance
 Recorder* g_recorder = nullptr;
 
+// Get AppData/Roaming/ScreenCraft/logs path for logging
+static std::wstring getNativeLogPath() {
+    wchar_t appData[MAX_PATH];
+    if (SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appData) != S_OK) {
+        return L"";
+    }
+    std::wstring logDir = std::wstring(appData) + L"\\ScreenCraft\\logs";
+    CreateDirectoryW(logDir.c_str(), NULL);
+    return logDir + L"\\native_timeline.log";
+}
+
 Recorder::Recorder()
     : state_(RecordingState::IDLE)
     , encoderType_(EncoderType::NONE)
     , ffmpegStdin_(nullptr)
 {
+    std::cerr << "[DIAG] Recorder::Recorder() called" << std::endl; std::cerr.flush();
     memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
 }
 
@@ -61,12 +74,9 @@ Recorder::~Recorder() {
 }
 
 bool Recorder::initialize(const std::wstring& modulePath) {
-    // Initialize COM for WASAPI (may already be initialized by host)
-    initCOM();
-
-    // Open timeline log file
-    g_timelineLogFile.open("recording_timeline.log", std::ios::app);
-    writeNativeLog("===== NATIVE CORE INITIALIZED =====");
+    // === Early diagnostics: output FFmpeg path check BEFORE opening log file ===
+    std::cerr << "[DIAG] initialize() called" << std::endl;
+    std::cerr.flush();
 
     // Set FFmpeg path from module path
     std::wstring ffmpegW = modulePath;
@@ -87,14 +97,39 @@ bool Recorder::initialize(const std::wstring& modulePath) {
     }
 
     if (GetFileAttributesW(ffmpegExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        // Convert wstring to narrow for logging
+        // Convert wstring to narrow for stderr output
         int sz = WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), nullptr, 0, nullptr, nullptr);
         std::string narrow(sz, 0);
         WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), &narrow[0], sz, nullptr, nullptr);
-        std::cerr << "[RECORDER] FFmpeg not found at: " << narrow << std::endl;
+        std::cerr << "[DIAG] FFmpeg NOT FOUND at: " << narrow << std::endl;
+        std::cerr.flush();
         return false;
     }
+    {
+        int sz2 = WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), nullptr, 0, nullptr, nullptr);
+        std::string narrow2(sz2, 0);
+        WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), &narrow2[0], sz2, nullptr, nullptr);
+        std::cerr << "[DIAG] FFmpeg found: " << narrow2 << std::endl;
+    }
+    std::cerr.flush();
+    std::cerr.flush();
 
+    // === Now safe to initialize COM and open log file ===
+    // Initialize COM for WASAPI (may already be initialized by host)
+    initCOM();
+
+    // Open timeline log file to AppData/ScreenCraft/logs (fixed location)
+    std::wstring logPath = getNativeLogPath();
+    if (!logPath.empty()) {
+        g_timelineLogFile.open(logPath, std::ios::app);
+    }
+    if (!g_timelineLogFile.is_open()) {
+        // Fallback to working directory
+        g_timelineLogFile.open("recording_timeline.log", std::ios::app);
+    }
+    writeNativeLog("===== NATIVE CORE INITIALIZED =====");
+
+    // FFmpeg path is already confirmed to exist above
     {
         int sz = WideCharToMultiByte(CP_UTF8, 0, ffmpegExe.c_str(), (int)ffmpegExe.size(), nullptr, 0, nullptr, nullptr);
         ffmpegPath_.resize(sz);

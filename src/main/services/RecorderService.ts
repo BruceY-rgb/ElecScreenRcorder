@@ -156,6 +156,7 @@ export class RecorderService {
   private lastHeartbeat: number = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private isRestarting: boolean = false;
+  private isDestroying: boolean = false;
 
   // Status broadcast timer (for duration updates)
   private statusBroadcastTimer: NodeJS.Timeout | null = null;
@@ -264,7 +265,9 @@ export class RecorderService {
         resolve: (value: any) => {
           clearTimeout(timeout);
           this.pendingRequests.delete(requestId);
-          reject(new Error(value.msg || value.message || 'Native core error'));
+          const msg = value.msg || value.message || 'Native core error';
+          this.broadcastNativeLog('ERROR', `录制命令失败: ${msg}`);
+          reject(new Error(msg));
         },
         reject,
         timeout: null as any, // managed by the primary request's timeout
@@ -511,15 +514,31 @@ export class RecorderService {
     }
 
     if (!this.config.nativeCorePath) {
+      this.log('ERROR', `Native core path not configured!`);
       throw new Error('Native core path not configured');
     }
 
-    this.log('INFO', `Starting native core: ${this.config.nativeCorePath}`);
+    this.log('INFO', `[ensureLocalCore] spawning: ${this.config.nativeCorePath}`);
+    this.broadcastNativeLog('INFO', `[ensureLocalCore] spawning native core...`);
 
     this.child = spawn(this.config.nativeCorePath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: { ...process.env }, // Inherit modified PATH from main process
+      windowsHide: false,  // 改为 false 以显示控制台窗口，确保 stderr 被正确捕获
+      detached: false,
+      env: { ...process.env },
+    });
+
+    this.log('INFO', `[ensureLocalCore] spawn returned, pid=${this.child.pid}`);
+    this.broadcastNativeLog('INFO', `[ensureLocalCore] spawn returned, pid=${this.child.pid}`);
+
+    // Log spawn errors (e.g., ENOENT - file not found, or DLL missing)
+    this.child.on('error', (err) => {
+      const msg = `Failed to spawn native core: ${err.message}`;
+      this.log('ERROR', msg);
+      this.log('ERROR', `Native core path: ${this.config.nativeCorePath}`);
+      // Broadcast to renderer log panel
+      this.broadcastNativeLog('ERROR', `启动 native core 失败: ${err.message}`);
+      this.broadcastNativeLog('ERROR', `路径: ${this.config.nativeCorePath}`);
     });
 
     // Setup stdout listener
@@ -531,12 +550,28 @@ export class RecorderService {
       this.handleMessage(line);
     });
 
+    // Handle stdout readline errors (e.g., EPIPE when child exits)
+    rl.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+        this.log('WARN', `stdout readline error: ${err.message}`);
+      }
+    });
+
+    // Handle stdin errors (e.g., EPIPE when child exits mid-write)
+    this.child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+        this.log('WARN', `stdin error: ${err.message}`);
+      }
+    });
+
     // Setup stderr listener
     this.child.stderr?.on('data', (data) => {
       const message = data.toString().trim();
       if (message) {
         const level = this.classifyStderrMessage(message);
         this.log(level, `[Native Core] ${message}`);
+        // Forward to renderer for the log panel
+        this.broadcastNativeLog(level, message);
       }
     });
 
@@ -622,11 +657,12 @@ export class RecorderService {
 
   private handleProcessExit(code: number | null, signal: string | null): void {
     const wasRecording = this.state === 'recording' || this.state === 'paused';
-    const isNormalExit = signal === 'SIGTERM' || signal === 'SIGKILL' || code === 0;
+    const isNormalExit = signal === 'SIGTERM' || signal === 'SIGKILL' || code === 0 || this.isDestroying;
 
-    // 如果是正常退出（SIGTERM），不视为崩溃
     if (isNormalExit) {
-      console.log('[RecorderService] Native core exited normally (SIGTERM), not treating as crash');
+      console.log('[RecorderService] Native core exited (expected)');
+    } else if (code !== null && code !== 0) {
+      this.log('ERROR', `Native core exited unexpectedly with code ${code}`);
     }
 
     this.child = null;
@@ -964,6 +1000,14 @@ export class RecorderService {
     this.broadcastStatus();
   }
 
+  private broadcastNativeLog(level: string, message: string): void {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('native:log', { level, message });
+      }
+    });
+  }
+
   private broadcastFinish(data: any): void {
     const result: FinishResult = {
       videoPath: data.videoPath || '',
@@ -981,6 +1025,9 @@ export class RecorderService {
   }
 
   destroy(): void {
+    if (this.isDestroying) return;
+    this.isDestroying = true;
+
     this.stopHeartbeat();
     this.stopStatusBroadcast();
 
@@ -992,19 +1039,15 @@ export class RecorderService {
     this.pendingRequests.clear();
 
     if (this.config.mode === 'local' && this.child) {
-      this.log('INFO', 'Destroying recorder service');
+      this.log('INFO', 'Stopping native core...');
       try {
-        this.child.stdin?.write(JSON.stringify({ action: 'quit' }) + '\n');
-      } catch {
-        // Ignore errors during shutdown
-      }
-
-      setTimeout(() => {
-        if (this.child && !this.child.killed) {
-          this.child.kill();
-          this.child = null;
+        if (!this.child.killed) {
+          this.child.kill('SIGTERM');
         }
-      }, 2000);
+      } catch {
+        // May already be exited, ignore
+      }
+      this.child = null;
     } else if (this.config.mode === 'remote' && this.socket) {
       this.log('INFO', 'Closing remote connection');
       try {

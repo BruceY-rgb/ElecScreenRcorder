@@ -190,6 +190,20 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
     const serviceDuration = Date.now() - serviceStart;
     writeTimelineLog(`T4: recorderService.start() returned (took ${serviceDuration}ms)`);
 
+    // If recording failed, do NOT show overlay - just restore main window and show error
+    if (startFailed) {
+      writeTimelineLog('T5: Recording failed, not showing overlay. Restoring main window...');
+      // Show error in the main window
+      if (windows.mainWindow && !windows.mainWindow.isDestroyed()) {
+        windows.mainWindow.webContents.send('recording-error', '无法启动录制，请查看底部日志面板了解原因');
+        windows.mainWindow.show();
+        windows.mainWindow.focus();
+      }
+      writeTimelineLog('T5b: Main window restored, overlay NOT shown');
+      writeTimelineLog('===== RECORDING START SEQUENCE FAILED =====\n');
+      return;
+    }
+
     // Show overlay after recording started
     writeTimelineLog('T5: Showing overlay window...');
     if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
@@ -273,7 +287,17 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
   });
 
   ipcMain.handle('system:info', async () => {
-    return await recorderService.getSystemInfo();
+    try {
+      return await recorderService.getSystemInfo();
+    } catch (err) {
+      const windows = getWindows();
+      const msg = err instanceof Error ? err.message : String(err);
+      windows.mainWindow?.webContents.send('native:log', {
+        level: 'ERROR',
+        message: `getSystemInfo 失败: ${msg}`,
+      });
+      throw err;
+    }
   });
 
   ipcMain.handle('recorder:checkInput', async () => {
@@ -282,6 +306,16 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
 
   // Get available audio input devices (microphones)
   ipcMain.handle('recorder:getAudioDevices', async () => {
-    return await recorderService.getAudioDevices();
+    try {
+      return await recorderService.getAudioDevices();
+    } catch (err) {
+      const windows = getWindows();
+      const msg = err instanceof Error ? err.message : String(err);
+      windows.mainWindow?.webContents.send('native:log', {
+        level: 'ERROR',
+        message: `getAudioDevices 失败: ${msg}`,
+      });
+      throw err;
+    }
   });
 }

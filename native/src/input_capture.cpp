@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <iostream>
 
 // Define virtual key codes if not already defined
 #ifndef VK_A
@@ -250,8 +251,11 @@ ModifierKeys getModifierKeys() {
 // Starts the hook thread immediately so that getCurrentInputState()
 // can track key/mouse state even before recording begins.
 void initInputCapture() {
+    std::cerr << "[DIAG] initInputCapture() called" << std::endl; std::cerr.flush();
+
     if (g_keyboardQueue) return;
 
+    std::cerr << "[DIAG] initInputCapture: allocating queues" << std::endl; std::cerr.flush();
     g_keyboardQueue = new moodycamel::ReaderWriterQueue<KeyboardEvent>(4096);
     g_mouseClickQueue = new moodycamel::ReaderWriterQueue<MouseClickEvent>(4096);
     g_mouseMoveQueue = new moodycamel::ReaderWriterQueue<MouseMoveEvent>(4096);
@@ -267,8 +271,10 @@ void initInputCapture() {
     }
 
     // Start hook thread early so we can track key state before recording
+    std::cerr << "[DIAG] initInputCapture: starting hook thread" << std::endl; std::cerr.flush();
     g_running.store(true);
     g_hookThread = CreateThread(NULL, 0, HookThreadProc, NULL, 0, &g_hookThreadId);
+    std::cerr << "[DIAG] initInputCapture: CreateThread returned, handle=" << g_hookThread << std::endl; std::cerr.flush();
 }
 
 // Shutdown input capture system
@@ -413,16 +419,24 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 DWORD WINAPI HookThreadProc(LPVOID lpParameter) {
     (void)lpParameter;
 
+    std::cerr << "[DIAG] HookThreadProc: started, installing hooks" << std::endl; std::cerr.flush();
+
     // Install low-level hooks
     g_keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+    std::cerr << "[DIAG] HookThreadProc: keyboard hook result=" << g_keyboardHook << std::endl; std::cerr.flush();
+
     g_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandle(NULL), 0);
+    std::cerr << "[DIAG] HookThreadProc: mouse hook result=" << g_mouseHook << std::endl; std::cerr.flush();
 
     if (!g_keyboardHook || !g_mouseHook) {
         // Failed to install hooks
+        std::cerr << "[DIAG] HookThreadProc: hook install FAILED, keyboard=" << g_keyboardHook << " mouse=" << g_mouseHook << std::endl; std::cerr.flush();
         if (g_keyboardHook) { UnhookWindowsHookEx(g_keyboardHook); g_keyboardHook = nullptr; }
         if (g_mouseHook) { UnhookWindowsHookEx(g_mouseHook); g_mouseHook = nullptr; }
         return 1;
     }
+
+    std::cerr << "[DIAG] HookThreadProc: hooks installed OK, entering message pump" << std::endl; std::cerr.flush();
 
     // Message pump (REQUIRED for low-level hooks to fire)
     MSG msg;

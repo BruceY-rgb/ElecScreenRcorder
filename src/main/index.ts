@@ -6,6 +6,23 @@ import { registerHandlers } from './ipc/handlers';
 import { RecorderService, RecorderConfig } from './services/RecorderService';
 import { createMainWindow, createOverlayWindow } from './windows/mainWindow';
 
+// Global exception handlers - catch EPIPE and other harmless errors at process level
+process.on('uncaughtException', (err: Error & { code?: string }) => {
+  if (err.code === 'EPIPE' || err.message?.includes('EPIPE')) {
+    // EPIPE is a known harmless error when child process exits during stdin write
+    return;
+  }
+  console.error('[Main] Uncaught exception:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  if (msg.includes('EPIPE')) {
+    return;
+  }
+  console.warn('[Main] Unhandled rejection:', reason);
+});
+
 // Add FFmpeg DLL directory to PATH at app startup
 function setupFFmpegPath() {
   const ffmpegDir = app.isPackaged

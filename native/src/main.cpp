@@ -737,6 +737,10 @@ CommandLineArgs parseArgs(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    // 最开头的诊断 - 在任何函数调用之前
+    std::cerr << "[DIAG] main() started, argc=" << argc << std::endl; std::cerr.flush();
+    OutputDebugStringW(L"[DIAG] main() started\n");
+
     // Parse command line arguments
     CommandLineArgs args = parseArgs(argc, argv);
 
@@ -753,20 +757,28 @@ int main(int argc, char* argv[]) {
 
     // CRITICAL: Setup binary mode first (only for stdio mode)
     if (args.mode == CommMode::STDIO) {
+        std::cerr << "[DIAG] calling setupBinaryMode()" << std::endl; std::cerr.flush();
         setupBinaryMode();
+        std::cerr << "[DIAG] setupBinaryMode() done" << std::endl; std::cerr.flush();
     }
 
     // Setup DPI awareness for accurate mouse coordinates
+    std::cerr << "[DIAG] calling setupDpiAwareness()" << std::endl; std::cerr.flush();
     setupDpiAwareness();
+    std::cerr << "[DIAG] setupDpiAwareness() done" << std::endl; std::cerr.flush();
 
     // Initialize high-resolution timer
+    std::cerr << "[DIAG] calling initHighResTimer()" << std::endl; std::cerr.flush();
     initHighResTimer();
+    std::cerr << "[DIAG] initHighResTimer() done" << std::endl; std::cerr.flush();
 
     // Initialize CSV writer system
+    std::cerr << "[MAIN] initCsvWriter()" << std::endl; std::cerr.flush();
     initCsvWriter();
 
     // Initialize input capture early so hook-based key state tracking
     // is available for CHECK_INPUT before recording starts
+    std::cerr << "[MAIN] initInputCapture()" << std::endl; std::cerr.flush();
     initInputCapture();
 
     // Initialize OBS recorder
@@ -778,9 +790,16 @@ int main(int argc, char* argv[]) {
     if (lastSlash != std::wstring::npos) {
         modulePath = modulePath.substr(0, lastSlash);
     }
+    std::cerr << "[MAIN] calling initRecorder()" << std::endl; std::cerr.flush();
 
     if (!initRecorder(modulePath)) {
         std::cerr << "[MAIN] Failed to initialize recorder\n";
+        std::cerr.flush();
+        shutdownInputCapture();
+        shutdownCsvWriter();
+        shutdownRecorder();
+        cleanupHighResTimer();
+        return 1;
     }
 
     // Create application instance

@@ -67,6 +67,11 @@ export interface InputState {
   pressedMouseButtons?: number[];
 }
 
+export interface NativeLogEntry {
+  level: string;
+  message: string;
+}
+
 const electronAPI = {
   selectSaveDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('dialog:selectDirectory'),
@@ -144,6 +149,11 @@ const electronAPI = {
   // Hotkey events
   onHotkeyPressed: (callback: (action: string) => void) => {
     ipcRenderer.on('hotkey:pressed', (_, action) => callback(action));
+  },
+
+  // Native log stream (native core stderr output)
+  onNativeLog: (callback: (data: { level: string; message: string }) => void) => {
+    ipcRenderer.on('native:log', (_, data) => callback(data));
   },
 };
 
