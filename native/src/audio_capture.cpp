@@ -346,19 +346,30 @@ void AudioCapture::captureThread() {
 bool AudioCapture::createNamedPipe(const std::string& pipeName) {
     pipePath_ = "\\\\.\\pipe\\" + pipeName;
 
+    // Create event to signal when FFmpeg connects
+    pipeReadyEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (!pipeReadyEvent_) {
+        std::cerr << "[AudioCapture] Failed to create pipe ready event: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    // Use PIPE_ACCESS_DUPLEX for bidirectional access
+    // This allows both the server (C++) to write and FFmpeg (client) to read
     namedPipe_ = CreateNamedPipeA(
         pipePath_.c_str(),
-        PIPE_ACCESS_OUTBOUND,
-        PIPE_TYPE_BYTE | PIPE_WAIT,
+        PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         1,              // max instances
         256 * 1024,     // out buffer 256KB
-        0,              // in buffer (unused, outbound pipe)
+        256 * 1024,     // in buffer 256KB (needed for duplex)
         0,              // default timeout
         nullptr);
 
     if (namedPipe_ == INVALID_HANDLE_VALUE) {
         std::cerr << "[AudioCapture] Failed to create named pipe: " << pipePath_
                   << " error=" << GetLastError() << std::endl;
+        CloseHandle(pipeReadyEvent_);
+        pipeReadyEvent_ = nullptr;
         return false;
     }
 
@@ -367,7 +378,7 @@ bool AudioCapture::createNamedPipe(const std::string& pipeName) {
     // Start async connection thread — blocks until FFmpeg connects
     pipeThread_ = std::thread(&AudioCapture::pipeConnectionThread, this);
 
-    std::cerr << "[AudioCapture] Named pipe created: " << pipePath_ << std::endl;
+    std::cerr << "[AudioCapture] Named pipe created (DUPLEX mode): " << pipePath_ << std::endl;
     return true;
 }
 
@@ -376,6 +387,10 @@ void AudioCapture::pipeConnectionThread() {
     if (result || GetLastError() == ERROR_PIPE_CONNECTED) {
         pipeConnected_ = true;
         std::cerr << "[AudioCapture] FFmpeg connected to audio pipe" << std::endl;
+        // Signal the event so waiting code knows FFmpeg is connected
+        if (pipeReadyEvent_) {
+            SetEvent(pipeReadyEvent_);
+        }
     } else {
         DWORD err = GetLastError();
         if (err != ERROR_NO_DATA && err != ERROR_BROKEN_PIPE) {
@@ -398,7 +413,31 @@ void AudioCapture::closeNamedPipe() {
         pipeThread_.join();
     }
 
+    if (pipeReadyEvent_) {
+        CloseHandle(pipeReadyEvent_);
+        pipeReadyEvent_ = nullptr;
+    }
+
     pipePath_.clear();
+}
+
+bool AudioCapture::waitForPipeReady(int timeoutMs) {
+    if (!pipeReadyEvent_) {
+        std::cerr << "[AudioCapture] waitForPipeReady: no event handle" << std::endl;
+        return false;
+    }
+
+    DWORD waitResult = WaitForSingleObject(pipeReadyEvent_, timeoutMs);
+    if (waitResult == WAIT_OBJECT_0) {
+        std::cerr << "[AudioCapture] waitForPipeReady: FFmpeg connected (wait succeeded)" << std::endl;
+        return true;
+    } else if (waitResult == WAIT_TIMEOUT) {
+        std::cerr << "[AudioCapture] waitForPipeReady: timeout waiting for FFmpeg" << std::endl;
+        return false;
+    } else {
+        std::cerr << "[AudioCapture] waitForPipeReady: wait failed: " << GetLastError() << std::endl;
+        return false;
+    }
 }
 
 std::string AudioCapture::getFFmpegFormatString() const {

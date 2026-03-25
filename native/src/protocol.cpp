@@ -45,6 +45,7 @@ CommandType parseActionType(const json& j) {
     if (action == "get_audio_devices") return CommandType::GET_AUDIO_DEVICES;
     if (action == "quit") return CommandType::QUIT;
     if (action == "exclude_from_capture") return CommandType::EXCLUDE_FROM_CAPTURE;
+    if (action == "status") return CommandType::STATUS;
 
     return CommandType::UNKNOWN;
 }

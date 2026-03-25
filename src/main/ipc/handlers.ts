@@ -147,6 +147,7 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
 
     // Debug: log config received
     console.log('[DEBUG IPC recorder:start] Resolution:', config.resolution);
+    console.log('[DEBUG IPC recorder:start] Windows:', !!windows.mainWindow, !!windows.overlayWindow);
 
     writeTimelineLog('===== RECORDING START SEQUENCE =====');
     writeTimelineLog('T0: User clicked start button');
@@ -164,13 +165,36 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
 
     // Start recording - main window is now hidden
     const serviceStart = Date.now();
-    await recorderService.start(config);
+    let startFailed = false;
+    try {
+      await recorderService.start(config);
+    } catch (err) {
+      // 注意：即使启动失败，如果 native core 通过 fallback 实际已经开始录制，
+      // 我们仍然需要能够停止它。这里标记一下但继续处理。
+      console.log('[IPC] recorderService.start initial error:', err);
+      startFailed = true;
+
+      // 检查 native core 的实际状态 - 可能是 ddagrab 失败后 fallback 成功
+      try {
+        const status = await recorderService.getStatus();
+        console.log('[IPC] Native core actual status after start failure:', status);
+        if (status.state === 'recording') {
+          // Native core 实际在录制，手动设置状态
+          recorderService.forceSetState('recording');
+          startFailed = false; // 实际上成功了
+        }
+      } catch (statusErr) {
+        console.log('[IPC] Could not get status:', statusErr);
+      }
+    }
     const serviceDuration = Date.now() - serviceStart;
     writeTimelineLog(`T4: recorderService.start() returned (took ${serviceDuration}ms)`);
 
     // Show overlay after recording started
     writeTimelineLog('T5: Showing overlay window...');
     if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+      console.log('[IPC] Overlay window exists, isLoading:', windows.overlayWindow.webContents.isLoading());
+
       // Check if auto-collapse is enabled
       const prefs = loadPreferences();
       if (prefs.autoCollapseOverlay) {
@@ -180,28 +204,64 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
         windows.overlayWindow.setSize(300, 90);
         windows.overlayWindow.webContents.send('overlay:mode', { mode: 'expanded' });
       }
-      windows.overlayWindow.showInactive();
+
+      // Add small delay to ensure renderer process is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Use show() instead of showInactive() to ensure window is displayed
+      windows.overlayWindow.show();
+      console.log('[IPC] Overlay window shown, isVisible:', windows.overlayWindow.isVisible());
+    } else {
+      console.log('[IPC] Overlay window NOT available:', !!windows.overlayWindow, windows.overlayWindow?.isDestroyed());
     }
     writeTimelineLog('T6: Overlay window shown');
     writeTimelineLog('===== RECORDING START SEQUENCE COMPLETE =====\n');
   });
 
   ipcMain.handle('recorder:stop', async () => {
-    const result = await recorderService.stop();
-    // Recording stopped — restore main window
     const windows = getWindows();
-    console.log('[IPC] recorder:stop success, restoring main window');
-    if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
-      windows.overlayWindow.hide();
+    try {
+      const result = await recorderService.stop();
+      // Recording stopped — restore main window
+      console.log('[IPC] recorder:stop success, restoring main window');
+      if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+        windows.overlayWindow.hide();
+      }
+      if (windows.mainWindow && !windows.mainWindow.isDestroyed()) {
+        // Send recording-finished event before showing the window so the
+        // renderer has the result ready when it becomes visible.
+        windows.mainWindow.webContents.send('recording-finished', result);
+        windows.mainWindow.show();
+        windows.mainWindow.focus();
+      }
+      return result;
+    } catch (err: any) {
+      console.log('[IPC] recorder:stop failed:', err.message);
+      // 强制设置状态为 idle，让 UI 显示 READY
+      recorderService.forceSetState('idle');
+
+      // 检查是否是进程已退出的情况
+      const isProcessExited = err.message?.includes('Process exited') ||
+                              err.message?.includes('Process closed') ||
+                              err.message?.includes('channel');
+
+      if (isProcessExited) {
+        // 进程已退出，不需要再停止，直接清理状态
+        console.log('[IPC] Native core already exited, cleaning up...');
+      }
+
+      // 仍然隐藏悬浮窗
+      if (windows.overlayWindow && !windows.overlayWindow.isDestroyed()) {
+        windows.overlayWindow.hide();
+      }
+      // 重新显示主窗口
+      if (windows.mainWindow && !windows.mainWindow.isDestroyed()) {
+        windows.mainWindow.show();
+        windows.mainWindow.focus();
+      }
+      // 静默处理错误，不抛出
+      return null;
     }
-    if (windows.mainWindow && !windows.mainWindow.isDestroyed()) {
-      // Send recording-finished event before showing the window so the
-      // renderer has the result ready when it becomes visible.
-      windows.mainWindow.webContents.send('recording-finished', result);
-      windows.mainWindow.show();
-      windows.mainWindow.focus();
-    }
-    return result;
   });
 
   ipcMain.handle('recorder:pause', async () => {

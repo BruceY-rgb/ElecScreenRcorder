@@ -18,6 +18,7 @@ enum class CommandType {
     GET_AUDIO_DEVICES,
     QUIT,
     EXCLUDE_FROM_CAPTURE,
+    STATUS,  // Get current status
     UNKNOWN
 };
 

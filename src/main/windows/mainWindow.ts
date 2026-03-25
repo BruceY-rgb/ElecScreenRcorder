@@ -37,7 +37,8 @@ export function createMainWindow(): BrowserWindow {
 }
 
 export function createOverlayWindow(): BrowserWindow {
-  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  console.log('[Overlay] Creating overlay window, screen:', screenWidth, 'x', screenHeight);
 
   const overlayWidth = 300;
   const overlayHeight = 90;

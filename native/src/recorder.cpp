@@ -323,17 +323,21 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 
     // ===== VIDEO ENCODER =====
     if (useDdagrab && encoderType_ != EncoderType::X264) {
-        // Hardware encoder: ddagrab D3D11 textures can be encoded directly
-        cmd << " -c:v ";
+        // Hardware encoder with ddagrab: need format conversion for some encoders
+        // QSV requires nv12 format specifically
         switch (encoderType_) {
             case EncoderType::NVENC:
-                cmd << "h264_nvenc -preset p7 -tune hq";
+                // NVENC can encode d3d11 directly on Windows
+                cmd << " -c:v h264_nvenc -preset p7 -tune hq";
                 break;
             case EncoderType::AMF:
-                cmd << "h264_amf -quality speed";
+                // AMF can handle d3d11 on Windows
+                cmd << " -c:v h264_amf -quality speed";
                 break;
             case EncoderType::QSV:
-                cmd << "h264_qsv";
+                // QSV requires nv12 format - need to convert from d3d11
+                cmd << " -vf format=nv12";
+                cmd << " -c:v h264_qsv";
                 break;
             default:
                 break;
@@ -639,6 +643,15 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     if (!started && ddagrabAvailable_ && config.captureHwnd == 0) {
         std::cerr << "[RECORDER] startRecording: ddagrab failed, falling back to gdigrab" << std::endl;
         writeNativeLog("N3_FALLBACK: ddagrab failed, retrying with gdigrab");
+
+        // Restart audio capture to recreate the named pipe (previous pipe was disconnected)
+        if (config.captureAudio) {
+            stopSystemAudioCapture();
+            if (!startSystemAudioCapture()) {
+                std::cerr << "[RECORDER] Warning: Could not restart audio capture for fallback" << std::endl;
+            }
+        }
+
         ddagrabAvailable_ = false;
         segConfig.savePath = currentSegmentPath_;
         command = buildFFmpegCommand(segConfig);
@@ -1478,6 +1491,9 @@ bool Recorder::startSystemAudioCapture() {
         systemAudioCapture_.reset();
         return false;
     }
+
+    // The pipe thread is now running ConnectNamedPipe, waiting for FFmpeg to connect.
+    // When FFmpeg starts and opens the pipe, the connection will be established.
 
     writeNativeLog(("WASAPI: System audio capture started, pipe: " + systemAudioCapture_->getPipePath()).c_str());
     return true;

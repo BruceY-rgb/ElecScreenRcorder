@@ -471,6 +471,23 @@ export class RecorderService {
     return result.devices || [];
   }
 
+  async getStatus(): Promise<{ state: string }> {
+    await this.connect();
+    const result = await this.sendCommandWithResponse('status', { action: 'status' });
+    return { state: result.state || 'unknown' };
+  }
+
+  // Force set state (used when start fails but actual recording succeeded via fallback)
+  forceSetState(newState: 'idle' | 'recording' | 'paused'): void {
+    this.state = newState;
+    if (newState === 'idle') {
+      this.recordingStartTime = 0;
+      this.duration = 0;
+      this.frameCount = 0;
+    }
+    this.broadcastStatus();
+  }
+
   // Connect to native core (local process or remote socket)
   private async connect(): Promise<void> {
     if (this.config.mode === 'local') {
@@ -605,16 +622,26 @@ export class RecorderService {
 
   private handleProcessExit(code: number | null, signal: string | null): void {
     const wasRecording = this.state === 'recording' || this.state === 'paused';
+    const isNormalExit = signal === 'SIGTERM' || signal === 'SIGKILL' || code === 0;
+
+    // 如果是正常退出（SIGTERM），不视为崩溃
+    if (isNormalExit) {
+      console.log('[RecorderService] Native core exited normally (SIGTERM), not treating as crash');
+    }
+
     this.child = null;
 
     // Clear all pending requests
     this.pendingRequests.forEach((request) => {
       clearTimeout(request.timeout);
-      request.reject(new Error('Process exited'));
+      if (!isNormalExit) {
+        request.reject(new Error('Process exited'));
+      }
     });
     this.pendingRequests.clear();
 
-    if (wasRecording && !this.isRestarting) {
+    // 只有在录制状态下且不是正常退出时才触发崩溃处理
+    if (wasRecording && !isNormalExit && !this.isRestarting) {
       this.state = 'reconnecting';
       this.broadcastStatus();
       this.log('ERROR', 'Native core crashed during recording');
@@ -627,6 +654,7 @@ export class RecorderService {
         this.attemptRestart();
       }, RESTART_DELAY);
     } else {
+      // 正常退出或非录制状态
       this.state = 'idle';
     }
 

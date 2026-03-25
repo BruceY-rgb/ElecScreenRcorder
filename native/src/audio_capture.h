@@ -42,6 +42,7 @@ public:
     bool createNamedPipe(const std::string& pipeName);
     void closeNamedPipe();
     std::string getPipePath() const { return pipePath_; }
+    bool waitForPipeReady(int timeoutMs = 5000);  // Wait for FFmpeg to connect
 
     // FFmpeg format helpers (based on detected WASAPI mix format)
     std::string getFFmpegFormatString() const;
@@ -76,6 +77,7 @@ private:
     std::string pipePath_;
     std::atomic<bool> pipeConnected_{false};
     std::thread pipeThread_;
+    HANDLE pipeReadyEvent_ = nullptr;  // Event signaled when FFmpeg connects
 };
 
 // Helper function to initialize COM

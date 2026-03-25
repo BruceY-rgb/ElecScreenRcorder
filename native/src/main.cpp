@@ -581,6 +581,19 @@ public:
             case CommandType::SYSINFO:
                 handleSysInfo();
                 break;
+            case CommandType::STATUS: {
+                // Return current state
+                std::string stateStr;
+                switch (state_) {
+                    case AppState::READY: stateStr = "ready"; break;
+                    case AppState::RECORDING: stateStr = "recording"; break;
+                    case AppState::PAUSED: stateStr = "paused"; break;
+                    case AppState::STOPPED: stateStr = "stopped"; break;
+                    default: stateStr = "unknown"; break;
+                }
+                sendResponse(createStatusResponse(stateStr));
+                break;
+            }
             case CommandType::CHECK_INPUT: {
                 InputState inputState = getCurrentInputState();
                 std::cerr << "[DEBUG] CHECK_INPUT: anyKeyPressed=" << inputState.anyKeyPressed
