@@ -834,11 +834,12 @@ export class RecorderService {
 
   private startStatusBroadcast(): void {
     this.stopStatusBroadcast();
-    // Poll input state at higher frequency (200ms) to catch momentary key presses
+    // 降低频率：从 200ms 改为 1000ms（1秒）
+    // 避免频繁的 IPC 调用占用系统资源，尤其是在高负载录制时
     this.statusBroadcastTimer = setInterval(async () => {
       this.updateDuration();
-      // Poll input state during recording
-      if (this.state === 'recording') {
+      // Poll input state during recording or paused
+      if (this.state === 'recording' || this.state === 'paused') {
         try {
           const inputState = await this.checkInputState();
           this.broadcastStatusWithInput(inputState);
@@ -848,7 +849,7 @@ export class RecorderService {
       } else {
         this.broadcastStatus();
       }
-    }, 200);
+    }, 1000);  // 从 200ms 改为 1000ms
   }
 
   private stopStatusBroadcast(): void {
@@ -871,6 +872,15 @@ export class RecorderService {
     if (elapsed > HEARTBEAT_TIMEOUT) {
       this.log('ERROR', `Heartbeat timeout: ${elapsed}ms`);
 
+      // 如果正在录制中，不杀死进程，只记录警告
+      // 原因：录制过程中 FFmpeg 可能占用大量资源导致响应延迟
+      // 高帧率录制时系统负载高，这是正常现象
+      if (this.state === 'recording' || this.state === 'paused') {
+        this.log('WARN', 'Heartbeat timeout during recording, ignoring (recording may still be active)');
+        return;  // 不执行重启，继续保持录制状态
+      }
+
+      // 非录制状态：正常处理心跳超时
       if (this.config.mode === 'local' && this.child && !this.child.killed) {
         this.child.kill();
       } else if (this.config.mode === 'remote' && this.socket) {

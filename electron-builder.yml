@@ -3,7 +3,7 @@ productName: ScreenCraft
 copyright: Copyright © 2024
 
 directories:
-  output: release-portable
+  output: dist-electron
   buildResources: build
 
 files:

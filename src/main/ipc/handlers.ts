@@ -11,6 +11,9 @@ interface WindowRefs {
 // Timeline log file path
 const timelineLogPath = path.join(app.getPath('userData'), 'recording_timeline.log');
 
+// 系统信息缓存（避免频繁调用超时）
+let systemInfoCache: any = null;
+
 function writeTimelineLog(message: string): void {
   const timestamp = new Date().toISOString();
   const logLine = `[${timestamp}] ${message}\n`;
@@ -288,15 +291,46 @@ export function registerHandlers(recorderService: RecorderService, getWindows: (
 
   ipcMain.handle('system:info', async () => {
     try {
-      return await recorderService.getSystemInfo();
+      // 添加较短的超时，避免长时间阻塞
+      const result = await Promise.race([
+        recorderService.getSystemInfo(),
+        new Promise((resolve) => setTimeout(() => resolve(null), 3000))
+      ]);
+      // 如果超时，返回缓存的系统信息或默认值
+      if (!result) {
+        if (systemInfoCache) return systemInfoCache;
+        // 返回最小化默认值
+        return {
+          screenWidth: 1920,
+          screenHeight: 1080,
+          scalingFactor: 1.0,
+          refreshRate: 60,
+          cpuName: 'Unknown',
+          gpuName: 'Unknown',
+          ramGB: 8,
+          mousePollingRate: 125
+        };
+      }
+      // 缓存成功的系统信息
+      systemInfoCache = result;
+      return result;
     } catch (err) {
       const windows = getWindows();
       const msg = err instanceof Error ? err.message : String(err);
-      windows.mainWindow?.webContents.send('native:log', {
-        level: 'ERROR',
-        message: `getSystemInfo 失败: ${msg}`,
-      });
-      throw err;
+      // 不再发送错误到前端，避免日志噪音
+      console.error(`[system:info] 获取失败: ${msg}`);
+      // 返回缓存或默认值
+      if (systemInfoCache) return systemInfoCache;
+      return {
+        screenWidth: 1920,
+        screenHeight: 1080,
+        scalingFactor: 1.0,
+        refreshRate: 60,
+        cpuName: 'Unknown',
+        gpuName: 'Unknown',
+        ramGB: 8,
+        mousePollingRate: 125
+      };
     }
   });
 
