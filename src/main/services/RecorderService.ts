@@ -834,8 +834,7 @@ export class RecorderService {
 
   private startStatusBroadcast(): void {
     this.stopStatusBroadcast();
-    // 降低频率：从 200ms 改为 1000ms（1秒）
-    // 避免频繁的 IPC 调用占用系统资源，尤其是在高负载录制时
+    // 状态广播频率
     this.statusBroadcastTimer = setInterval(async () => {
       this.updateDuration();
       // Poll input state during recording or paused
@@ -849,7 +848,7 @@ export class RecorderService {
       } else {
         this.broadcastStatus();
       }
-    }, 1000);  // 从 200ms 改为 1000ms
+    }, 200);
   }
 
   private stopStatusBroadcast(): void {
