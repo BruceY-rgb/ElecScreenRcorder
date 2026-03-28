@@ -88,5 +88,24 @@ export function createOverlayWindow(): BrowserWindow {
     }
   });
 
+  // 定期检测并恢复置顶状态，防止被全屏应用降级
+  const topMostCheckInterval = setInterval(() => {
+    if (!overlayWindow.isDestroyed()) {
+      // 尝试恢复置顶状态
+      const success = overlayWindow.setAlwaysOnTop(true);
+      if (!success) {
+        console.log('[Overlay] Failed to restore always on top');
+      }
+    } else {
+      // 窗口已销毁，清除定时器
+      clearInterval(topMostCheckInterval);
+    }
+  }, 5000);  // 每5秒检查一次
+
+  // 当窗口关闭时清除定时器
+  overlayWindow.on('closed', () => {
+    clearInterval(topMostCheckInterval);
+  });
+
   return overlayWindow;
 }

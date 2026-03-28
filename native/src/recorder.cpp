@@ -1144,16 +1144,37 @@ bool Recorder::concatenateSegments() {
     STARTUPINFOA si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     si.wShowWindow = SW_HIDE;
+
+    // Create pipes for stderr capture
+    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
+    HANDLE stderrRead, stderrWrite;
+    CreatePipe(&stderrRead, &stderrWrite, &sa, 0);
+    si.hStdError = stderrWrite;
 
     char* cmdLine = _strdup(concatCmd.c_str());
     bool success = false;
+    std::string errorOutput;
 
-    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, FALSE,
+    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        // Close stderr write handle in parent
+        CloseHandle(stderrWrite);
+        stderrWrite = nullptr;
+
         // Wait for concat to finish (should be fast since -c copy)
         DWORD waitResult = WaitForSingleObject(pi.hProcess, 60000);  // 60s timeout
+
+        // Read stderr output
+        char buffer[4096];
+        DWORD bytesRead;
+        while (ReadFile(stderrRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
+            buffer[bytesRead] = 0;
+            errorOutput += buffer;
+        }
+        CloseHandle(stderrRead);
+        stderrRead = nullptr;
 
         if (waitResult == WAIT_TIMEOUT) {
             writeNativeLog("CONCAT_ERROR: Concat process timed out");
@@ -1166,6 +1187,10 @@ bool Recorder::concatenateSegments() {
                 success = true;
             } else {
                 writeNativeLog(("CONCAT_ERROR: FFmpeg exited with code " + std::to_string(exitCode)).c_str());
+                // Log detailed error output
+                if (!errorOutput.empty()) {
+                    writeNativeLog(("CONCAT_ERROR: FFmpeg stderr: " + errorOutput).c_str());
+                }
             }
         }
 
@@ -1179,6 +1204,19 @@ bool Recorder::concatenateSegments() {
 
     // Clean up list file
     std::remove(listPath.c_str());
+
+    if (!success) {
+        // 合并失败时，将分段文件移动到临时目录保留
+        writeNativeLog("CONCAT_ERROR: Concatenation failed, preserving segment files for recovery");
+        std::string failedDir = finalOutputPath_ + "_failed_segments";
+        CreateDirectoryA(failedDir.c_str(), NULL);
+        for (const auto& seg : segmentPaths_) {
+            std::string destPath = failedDir + "\\" + seg.substr(seg.find_last_of("\\/") + 1);
+            MoveFileA(seg.c_str(), destPath.c_str());
+            writeNativeLog(("CONCAT: Moved segment to " + destPath).c_str());
+        }
+        writeNativeLog(("CONCAT: All segments preserved in " + failedDir).c_str());
+    }
 
     return success;
 }
@@ -1204,10 +1242,31 @@ std::string Recorder::buildMicFFmpegCommand(const RecordingConfig& config) {
 
     // For microphone, use dshow to capture audio input device
     // Use "audio=device_name" format for dshow
+
+    // Escape microphone device name if it contains special characters
+    std::string escapedMicDevice = config.microphoneDevice;
+    if (!escapedMicDevice.empty()) {
+        // Check if escaping is needed
+        if (escapedMicDevice.find(' ') != std::string::npos ||
+            escapedMicDevice.find('(') != std::string::npos ||
+            escapedMicDevice.find(')') != std::string::npos ||
+            escapedMicDevice.find('&') != std::string::npos ||
+            escapedMicDevice.find('"') != std::string::npos) {
+            // Replace internal double quotes with two double quotes
+            size_t pos = escapedMicDevice.find('"');
+            while (pos != std::string::npos) {
+                escapedMicDevice.replace(pos, 1, "\"\"");
+                pos = escapedMicDevice.find('"', pos + 2);
+            }
+            // Wrap in double quotes
+            escapedMicDevice = "\"" + escapedMicDevice + "\"";
+        }
+    }
+
     cmd << " -f dshow -i audio";
     if (!config.microphoneDevice.empty()) {
         // Use double quotes around device name - FFmpeg dshow expects exact name
-        cmd << "=\"" << config.microphoneDevice << "\"";
+        cmd << "=" << escapedMicDevice;
     } else {
         // Use default audio input device (empty string after audio=)
         cmd << "=\"\"";
@@ -1484,15 +1543,34 @@ bool Recorder::concatenateMicSegments() {
     STARTUPINFOA si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     si.wShowWindow = SW_HIDE;
+
+    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
+    HANDLE stderrRead, stderrWrite;
+    CreatePipe(&stderrRead, &stderrWrite, &sa, 0);
+    si.hStdError = stderrWrite;
 
     char* cmdLine = _strdup(concatCmd.c_str());
     bool success = false;
+    std::string errorOutput;
 
-    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, FALSE,
+    if (CreateProcessA(nullptr, cmdLine, nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(stderrWrite);
+        stderrWrite = nullptr;
+
         DWORD waitResult = WaitForSingleObject(pi.hProcess, 60000);
+
+        char buffer[4096];
+        DWORD bytesRead;
+        while (ReadFile(stderrRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
+            buffer[bytesRead] = 0;
+            errorOutput += buffer;
+        }
+        CloseHandle(stderrRead);
+        stderrRead = nullptr;
+
         if (waitResult == WAIT_TIMEOUT) {
             writeNativeLog("MIC_CONCAT_ERROR: Timed out");
             TerminateProcess(pi.hProcess, 1);
@@ -1504,6 +1582,9 @@ bool Recorder::concatenateMicSegments() {
                 success = true;
             } else {
                 writeNativeLog(("MIC_CONCAT_ERROR: exit code " + std::to_string(exitCode)).c_str());
+                if (!errorOutput.empty()) {
+                    writeNativeLog(("MIC_CONCAT_ERROR: FFmpeg stderr: " + errorOutput).c_str());
+                }
             }
         }
         CloseHandle(pi.hProcess);
@@ -1514,6 +1595,18 @@ bool Recorder::concatenateMicSegments() {
 
     free(cmdLine);
     std::remove(listPath.c_str());
+
+    if (!success) {
+        writeNativeLog("MIC_CONCAT_ERROR: Concatenation failed, preserving segment files for recovery");
+        std::string failedDir = finalMicAudioPath_ + "_failed_segments";
+        CreateDirectoryA(failedDir.c_str(), NULL);
+        for (const auto& seg : micSegmentPaths_) {
+            std::string destPath = failedDir + "\\" + seg.substr(seg.find_last_of("\\/") + 1);
+            MoveFileA(seg.c_str(), destPath.c_str());
+        }
+        writeNativeLog(("MIC_CONCAT: All segments preserved in " + failedDir).c_str());
+    }
+
     return success;
 }
 

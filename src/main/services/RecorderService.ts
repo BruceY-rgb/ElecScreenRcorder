@@ -155,6 +155,7 @@ export class RecorderService {
   // Heartbeat tracking
   private lastHeartbeat: number = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutCount: number = 0;  // 连续超时计数
   private isRestarting: boolean = false;
   private isDestroying: boolean = false;
   private isStopping: boolean = false;
@@ -377,6 +378,7 @@ export class RecorderService {
     this.frameCount = 0;
     this.shouldRemuxToMp4 = config.remuxToMp4;
     this.currentConfig = config;
+    this.heartbeatTimeoutCount = 0;  // 重置心跳超时计数
 
     this.log('INFO', `Recording started: ${config.resolution.width}x${config.resolution.height} @ ${config.fps}fps`);
     this.broadcastStatus();
@@ -893,13 +895,31 @@ export class RecorderService {
     const elapsed = now - this.lastHeartbeat;
 
     if (elapsed > HEARTBEAT_TIMEOUT) {
-      this.log('ERROR', `Heartbeat timeout: ${elapsed}ms`);
+      this.log('ERROR', `Heartbeat timeout: ${elapsed}ms, count: ${this.heartbeatTimeoutCount + 1}`);
+      this.heartbeatTimeoutCount++;
 
-      // 如果正在录制中，不杀死进程，只记录警告
-      // 原因：录制过程中 FFmpeg 可能占用大量资源导致响应延迟
-      // 高帧率录制时系统负载高，这是正常现象
+      // 连续超时3次以上，认为 FFmpeg 崩溃
+      if (this.heartbeatTimeoutCount >= 3) {
+        this.log('ERROR', 'FFmpeg appears to be crashed (3+ consecutive heartbeats timeout)');
+        this.heartbeatTimeoutCount = 0;  // 重置计数
+
+        // 强制停止录制
+        if (this.state === 'recording' || this.state === 'paused') {
+          this.log('ERROR', 'Forcing recording stop due to FFmpeg crash');
+          this.state = 'idle';
+          this.stopHeartbeat();
+          this.stopStatusBroadcast();
+          this.currentConfig = null;
+          this.mouseActivity = 0;
+          this.broadcastStatus();
+          // 发送错误通知到 UI
+          this.broadcastError('Recording failed: FFmpeg process crashed');
+        }
+      }
+
+      // 如果正在录制中且连续超时少于3次，只记录警告
       if (this.state === 'recording' || this.state === 'paused') {
-        this.log('WARN', 'Heartbeat timeout during recording, ignoring (recording may still be active)');
+        this.log('WARN', `Heartbeat timeout during recording (attempt ${this.heartbeatTimeoutCount}/3), ignoring...`);
         return;  // 不执行重启，继续保持录制状态
       }
 

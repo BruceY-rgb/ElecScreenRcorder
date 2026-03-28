@@ -40,11 +40,22 @@ function OverlayDisplay() {
     window.electronAPI.stopRecording().catch(console.error);
   }, []);
 
+  // 收起状态下点击展开悬浮窗
+  const handleExpand = useCallback(() => {
+    if (overlayMode === 'collapsed') {
+      window.electronAPI.setMode('expanded').catch(console.error);
+    }
+  }, [overlayMode]);
+
   const isRecording = status.state === 'recording';
   const isPaused = status.state === 'paused';
 
   return (
-    <div className={`overlay ${overlayMode === 'collapsed' ? 'overlay-collapsed' : ''}`}>
+    <div
+      className={`overlay ${overlayMode === 'collapsed' ? 'overlay-collapsed' : ''}`}
+      onClick={handleExpand}
+      style={{ cursor: overlayMode === 'collapsed' ? 'pointer' : 'default' }}
+    >
       <div className="overlay-indicator" style={{
         background: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
       }} />

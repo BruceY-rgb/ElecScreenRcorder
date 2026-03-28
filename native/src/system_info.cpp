@@ -36,6 +36,14 @@ bool getDisplayInfo(int& width, int& height, int& refreshRate) {
     devMode.dmSize = sizeof(DEVMODEW);
 
     if (!EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &devMode)) {
+        DWORD error = GetLastError();
+        // Log detailed error information
+        char errorMsg[256];
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, error,
+                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                      errorMsg, sizeof(errorMsg), NULL);
+        std::cerr << "[SYSTEM_INFO] ERROR: EnumDisplaySettingsW failed. Error: " << error
+                  << " (" << errorMsg << ")" << std::endl;
         // Fallback to GetSystemMetrics
         width = GetSystemMetrics(SM_CXSCREEN);
         height = GetSystemMetrics(SM_CYSCREEN);
