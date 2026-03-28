@@ -54,6 +54,7 @@ yarn-error.log*
 .trellis/
 !docs/plan.md
 !docs/product-design.md
+!docs/problem-index.md
 docs/
 AGENTS.md
 CLAUDE.md
