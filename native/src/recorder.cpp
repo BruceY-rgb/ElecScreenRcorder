@@ -1,4 +1,3 @@
-```cpp
 /**
  * FFmpeg-based Screen Recording Implementation
  *
@@ -843,14 +842,14 @@ void Recorder::resumeRecording() {
             writeNativeLog("RESUME_FAIL: Failed to build mic FFmpeg command.");
             stopFFmpegGracefully(1000); // Stop main FFmpeg if mic fails
             stopSystemAudioCapture();
-            return false;
+            return;
         }
         if (!startMicFFmpeg(micFFmpegCommand)) {
             std::cerr << "[RECORDER] Failed to restart mic FFmpeg process for resume." << std::endl;
             writeNativeLog("RESUME_FAIL: Failed to restart mic FFmpeg process.");
             stopFFmpegGracefully(1000); // Stop main FFmpeg if mic fails
             stopSystemAudioCapture();
-            return false;
+            return;
         }
     }
 
@@ -1372,5 +1371,3 @@ void shutdownRecorder() {
         g_recorder = nullptr;
     }
 }
-
-```
