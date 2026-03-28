@@ -198,6 +198,9 @@ private:
     // Gracefully stop the current FFmpeg process
     bool stopFFmpegGracefully(int timeoutMs = 30000);
 
+    // Asynchronously wait for FFmpeg to exit and clean up its resources
+    void waitForFFmpegExitAndCleanup(PROCESS_INFORMATION ffmpegProcess, HANDLE ffmpegStdin, int timeoutMs, const std::string& segmentPath, const std::string& finalPath, bool isMicProcess);
+
     // Generate next segment file path (e.g. recording_seg001.mkv)
     std::string generateSegmentPath();
 

@@ -88,21 +88,61 @@ export function createOverlayWindow(): BrowserWindow {
     }
   });
 
-  // 定期检测并恢复置顶状态，防止被全屏应用降级
+  // Enhanced always-on-top logic with fullscreen detection and adaptive layer management
+  // This prevents the overlay from being hidden by fullscreen applications
+  let isOverlayVisible = false;
+  
   const topMostCheckInterval = setInterval(() => {
-    if (!overlayWindow.isDestroyed()) {
-      // 尝试恢复置顶状态
-      const success = overlayWindow.setAlwaysOnTop(true);
-      if (!success) {
-        console.log('[Overlay] Failed to restore always on top');
-      }
-    } else {
-      // 窗口已销毁，清除定时器
+    if (overlayWindow.isDestroyed()) {
       clearInterval(topMostCheckInterval);
+      return;
     }
-  }, 5000);  // 每5秒检查一次
 
-  // 当窗口关闭时清除定时器
+    try {
+      // Get the currently focused window
+      const focusedWindow = BrowserWindow.getFocusedWindow();
+      
+      // Check if overlay is visible
+      const overlayVisible = overlayWindow.isVisible();
+      
+      // Update visibility tracking
+      isOverlayVisible = overlayVisible;
+      
+      // Detect if a fullscreen application (not our overlay) is in focus
+      const isForeignFullscreen = focusedWindow && focusedWindow !== overlayWindow && focusedWindow.isFullScreen();
+      
+      if (isForeignFullscreen) {
+        // Fullscreen app detected - use higher layer strategy
+        // Try to maintain visibility by re-asserting always-on-top with screen-saver level
+        overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+        
+        // If overlay should be visible but isn't, attempt to restore it
+        if (overlayVisible && !overlayWindow.isVisible()) {
+          overlayWindow.show();
+          overlayWindow.focus();
+        }
+      } else {
+        // Normal window layer - standard always-on-top is sufficient
+        overlayWindow.setAlwaysOnTop(true);
+      }
+    } catch (err) {
+      console.error('[Overlay] Error in topmost check:', err);
+    }
+  }, 1000);  // Check every 1 second for faster response to fullscreen transitions
+
+  // Monitor overlay focus loss and attempt recovery
+  overlayWindow.on('blur', () => {
+    // When overlay loses focus, ensure it stays on top
+    if (!overlayWindow.isDestroyed()) {
+      try {
+        overlayWindow.setAlwaysOnTop(true);
+      } catch (err) {
+        console.error('[Overlay] Error restoring always-on-top after blur:', err);
+      }
+    }
+  });
+
+  // Clean up interval when window closes
   overlayWindow.on('closed', () => {
     clearInterval(topMostCheckInterval);
   });

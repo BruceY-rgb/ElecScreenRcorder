@@ -236,14 +236,20 @@ InputState getCurrentInputState() {
     return state;
 }
 
-// Get modifier key states
+// Get modifier key states from the hook-tracked array
 ModifierKeys getModifierKeys() {
     ModifierKeys keys;
     // Use g_keyStates array (maintained by hook thread) instead of GetAsyncKeyState
-    // This provides more accurate modifier key state during key events
-    keys.altKey = g_keyStates[VK_MENU].load(std::memory_order_relaxed);
-    keys.ctrlKey = g_keyStates[VK_CONTROL].load(std::memory_order_relaxed);
-    keys.shiftKey = g_keyStates[VK_SHIFT].load(std::memory_order_relaxed);
+    // Check both generic and left/right variants for maximum compatibility
+    keys.altKey = g_keyStates[VK_MENU].load(std::memory_order_relaxed) ||
+                  g_keyStates[VK_LMENU].load(std::memory_order_relaxed) ||
+                  g_keyStates[VK_RMENU].load(std::memory_order_relaxed);
+    keys.ctrlKey = g_keyStates[VK_CONTROL].load(std::memory_order_relaxed) ||
+                   g_keyStates[VK_LCONTROL].load(std::memory_order_relaxed) ||
+                   g_keyStates[VK_RCONTROL].load(std::memory_order_relaxed);
+    keys.shiftKey = g_keyStates[VK_SHIFT].load(std::memory_order_relaxed) ||
+                    g_keyStates[VK_LSHIFT].load(std::memory_order_relaxed) ||
+                    g_keyStates[VK_RSHIFT].load(std::memory_order_relaxed);
     keys.metaKey = g_keyStates[VK_LWIN].load(std::memory_order_relaxed) ||
                    g_keyStates[VK_RWIN].load(std::memory_order_relaxed);
     return keys;

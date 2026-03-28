@@ -306,7 +306,9 @@ void AudioCapture::captureThread() {
                     std::vector<uint8_t> silence(dataBytes, 0);
                     if (pipeConnected_ && namedPipe_ != INVALID_HANDLE_VALUE) {
                         DWORD bytesWritten;
-                        WriteFile(namedPipe_, silence.data(), (DWORD)silence.size(), &bytesWritten, nullptr);
+                        if (!WriteFile(namedPipe_, silence.data(), (DWORD)silence.size(), &bytesWritten, nullptr)) {
+                            std::cerr << "[AudioCapture] ERROR: Failed to write silent data to pipe. Error: " << GetLastError() << std::endl;
+                        }
                     }
                     if (callback_) {
                         callback_(silence.data(), silence.size(), qpcPosition);
@@ -315,7 +317,9 @@ void AudioCapture::captureThread() {
                     // Write audio data to named pipe
                     if (pipeConnected_ && namedPipe_ != INVALID_HANDLE_VALUE) {
                         DWORD bytesWritten;
-                        WriteFile(namedPipe_, pData, (DWORD)dataBytes, &bytesWritten, nullptr);
+                        if (!WriteFile(namedPipe_, pData, (DWORD)dataBytes, &bytesWritten, nullptr)) {
+                            std::cerr << "[AudioCapture] ERROR: Failed to write audio data to pipe. Error: " << GetLastError() << std::endl;
+                        }
                     }
                     if (callback_) {
                         callback_(pData, dataBytes, qpcPosition);
