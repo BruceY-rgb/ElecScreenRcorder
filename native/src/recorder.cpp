@@ -386,34 +386,36 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
     // ===== VIDEO INPUT =====
     if (useDdagrab) {
         cmd << " -f ddagrab";
-        cmd << " -i desktop";
+        // Input options for ddagrab must come BEFORE -i
         cmd << " -framerate " << config.fps;
         cmd << " -s " << config.width << "x" << config.height;
+        cmd << " -i desktop";
         writeNativeLog("FFMPEG_CMD: Using ddagrab for video input.");
     } else {
         // gdigrab for window capture or if ddagrab is not available
         cmd << " -f gdigrab";
-        cmd << " -i desktop"; // gdigrab always captures desktop, then we crop
+        // Input options for gdigrab must come BEFORE -i
         cmd << " -framerate " << config.fps;
-        cmd << " -offset_x 0 -offset_y 0"; // Placeholder, actual cropping handled by -vf
+        cmd << " -offset_x 0 -offset_y 0";
         cmd << " -video_size " << config.width << "x" << config.height;
+        cmd << " -i desktop"; // gdigrab always captures desktop, then we crop
         writeNativeLog("FFMPEG_CMD: Using gdigrab for video input.");
     }
 
     // ===== AUDIO INPUT =====
     int audioInputCount = 0;
-    // DEBUG: Skip audio for now to isolate the issue
-    /*
+    // System audio via named pipe from WASAPI
+    // Re-enabled with conditional write in audio_capture.cpp
     if (config_.captureAudio && !systemAudioPipeName_.empty()) {
         // Use full pipe path for FFmpeg (\\.\pipe\ prefix)
         std::string fullPipePath = "\\\\.\\pipe\\" + systemAudioPipeName_;
+        // Use s16le format
         cmd << " -f s16le -ar " << systemAudioCapture_->getSampleRate() << " -ac " << systemAudioCapture_->getChannels();
         cmd << " -i \"" << fullPipePath << "\"";
         audioInputCount++;
         std::cerr << "[RECORDER] System audio via WASAPI pipe: " << fullPipePath
-                  << " fmt=" << systemAudioCapture_->getFormat() << " ar=" << systemAudioCapture_->getSampleRate() << " ac=" << systemAudioCapture_->getChannels() << std::endl;
+                  << " ar=" << systemAudioCapture_->getSampleRate() << " ac=" << systemAudioCapture_->getChannels() << std::endl;
     }
-    */
 
     // Microphone is recorded to a separate file via a dedicated FFmpeg process.
 
@@ -494,8 +496,9 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
     std::string buffer;
     bool sawReadySignal = false;
     auto readyTime = std::chrono::steady_clock::now();
-    // After seeing "Press [q] to stop", wait up to 500ms more to check for encoder errors
-    const int postReadyCheckMs = 500;
+    // After seeing "Press [q] to stop", wait up to 1 second more to check for encoder errors
+    // This is critical for pipe-based audio inputs that need time to establish connection
+    const int postReadyCheckMs = 1000;
 
     while (true) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -530,32 +533,37 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
                 std::string chunk(tempBuf, bytesRead);
                 writeNativeLog(("F_STDERR: " + chunk).c_str());
 
-                // Failure: FFmpeg encountered an error (check BEFORE success)
-                if (buffer.find("Error opening input") != std::string::npos ||
-                    buffer.find("Unknown input format") != std::string::npos ||
-                    buffer.find("Cannot open") != std::string::npos ||
-                    buffer.find("No such file or directory") != std::string::npos ||
-                    buffer.find("Invalid argument") != std::string::npos ||
-                    buffer.find("Option not found") != std::string::npos ||
-                    buffer.find("Unable to open") != std::string::npos ||
-                    buffer.find("Error initializing filter") != std::string::npos ||
-                    buffer.find("Error while opening encoder") != std::string::npos ||
-                    buffer.find("Failed to create D3D11 device") != std::string::npos ||
-                    buffer.find("Failed to initialize DXGI Desktop Duplication API") != std::string::npos ||
-                    buffer.find("No capable devices found") != std::string::npos ||
-                    buffer.find("Error during codec control") != std::string::npos ||
-                    buffer.find("Implementation not found") != std::string::npos ||
-                    buffer.find("Device not found") != std::string::npos ||
-                    buffer.find("Cannot initialize") != std::string::npos ||
-                    buffer.find("QSV") != std::string::npos ||
-                    buffer.find("encoder (qsv)") != std::string::npos) {
-                    writeNativeLog("F_ERROR: FFmpeg reported an error.");
-                    return false;
+                // Only check for fatal errors AFTER we've seen the ready signal
+                // This prevents false positives from non-fatal "error" mentions in FFmpeg output
+                if (sawReadySignal) {
+                    if (buffer.find("Error opening input") != std::string::npos ||
+                        buffer.find("Unknown input format") != std::string::npos ||
+                        buffer.find("Cannot open") != std::string::npos ||
+                        buffer.find("No such file or directory") != std::string::npos ||
+                        buffer.find("Invalid argument") != std::string::npos ||
+                        buffer.find("Option not found") != std::string::npos ||
+                        buffer.find("Unable to open") != std::string::npos ||
+                        buffer.find("Error initializing filter") != std::string::npos ||
+                        buffer.find("Error while opening encoder") != std::string::npos ||
+                        buffer.find("Failed to create D3D11 device") != std::string::npos ||
+                        buffer.find("Failed to initialize DXGI Desktop Duplication API") != std::string::npos ||
+                        buffer.find("No capable devices found") != std::string::npos ||
+                        buffer.find("Error during codec control") != std::string::npos ||
+                        buffer.find("Implementation not found") != std::string::npos ||
+                        buffer.find("Device not found") != std::string::npos ||
+                        buffer.find("Cannot initialize") != std::string::npos ||
+                        buffer.find("QSV") != std::string::npos ||
+                        buffer.find("encoder (qsv)") != std::string::npos) {
+                        writeNativeLog("F_ERROR: FFmpeg reported a fatal error after ready signal.");
+                        return false;
+                    }
                 }
 
                 // Success: FFmpeg is ready and waiting for input
-                if (buffer.find("Press [q] to stop, [?] for status") != std::string::npos ||
-                    buffer.find("Output #0, matroska") != std::string::npos) {
+                // Note: FFmpeg can output "Press [q] to stop, [?] for help" OR "Press [q] to stop, [?] for status"
+                if (buffer.find("Press [q] to stop") != std::string::npos ||
+                    buffer.find("Output #0, matroska") != std::string::npos ||
+                    buffer.find("Output #0, mp4") != std::string::npos) {
                     if (!sawReadySignal) {
                         sawReadySignal = true;
                         readyTime = std::chrono::steady_clock::now();
@@ -569,10 +577,24 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
         }
 
         // If FFmpeg process has exited prematurely, it's a failure
+        // Check this FIRST before waiting for ready signal
         DWORD exitCode;
-        if (GetExitCodeProcess(ffmpegProcess_.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
-            writeNativeLog(("F_EXITED: FFmpeg process exited prematurely with code " + std::to_string(exitCode)).c_str());
-            return false;
+        if (GetExitCodeProcess(ffmpegProcess_.hProcess, &exitCode)) {
+            if (exitCode != STILL_ACTIVE) {
+                // FFmpeg has exited - log the full buffer to see what happened
+                // Also capture any remaining data in the pipe
+                DWORD bytesAvailable = 0;
+                if (PeekNamedPipe(hStderrRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+                    char extraBuf[4096];
+                    DWORD extraRead = 0;
+                    if (ReadFile(hStderrRead, extraBuf, sizeof(extraBuf) - 1, &extraRead, NULL)) {
+                        buffer.append(extraBuf, extraRead);
+                    }
+                }
+                writeNativeLog(("F_EXITED: FFmpeg exited, code=" + std::to_string(exitCode) + ", buffer_len=" + std::to_string(buffer.size()) + ", contents: " + buffer).c_str());
+                std::cerr << "[RECORDER] DEBUG: FFmpeg exited with code " << exitCode << ", buffer (" << buffer.size() << " chars): " << buffer << std::endl;
+                return false;
+            }
         }
     }
 }
@@ -948,10 +970,16 @@ bool Recorder::stopFFmpegGracefully(int timeoutMs) {
             TerminateProcess(currentFfmpegProcess.hProcess, 0);
         }
         if (!FlushFileBuffers(currentFfmpegStdin)) {
-            std::cerr << "[RECORDER] ERROR: Failed to flush FFmpeg stdin. Error: " << GetLastError() << std::endl;
-            writeNativeLog("FFG2_ERROR: Failed to flush FFmpeg stdin, forcing termination.");
-            // If flush fails, terminate and let async cleanup handle the rest
-            TerminateProcess(currentFfmpegProcess.hProcess, 0);
+            DWORD err = GetLastError();
+            // Error 109 (ERROR_NO_DATA) is expected if FFmpeg already closed its end
+            // Only log as error if it's a different error
+            if (err != 109) {
+                std::cerr << "[RECORDER] ERROR: Failed to flush FFmpeg stdin. Error: " << err << std::endl;
+                writeNativeLog("FFG2_ERROR: Failed to flush FFmpeg stdin, forcing termination.");
+                TerminateProcess(currentFfmpegProcess.hProcess, 0);
+            } else {
+                std::cerr << "[RECORDER] DEBUG: Flush returned ERROR_NO_DATA - FFmpeg pipe already closed (normal)" << std::endl;
+            }
         }
         CloseHandle(currentFfmpegStdin);
         writeNativeLog("FFG2: Sent 'q' to FFmpeg, initiating async cleanup...");
@@ -1425,6 +1453,11 @@ bool Recorder::startSystemAudioCapture() {
         systemAudioCapture_.reset();
         return false;
     }
+
+    // Give audio capture thread time to initialize and start delivering data
+    std::cerr << "[RECORDER] DEBUG: Waiting for audio capture to initialize..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::cerr << "[RECORDER] DEBUG: Audio capture should be ready now" << std::endl;
 
     writeNativeLog("System audio capture started successfully.");
     return true;

@@ -596,9 +596,11 @@ public:
             }
             case CommandType::CHECK_INPUT: {
                 InputState inputState = getCurrentInputState();
-                std::cerr << "[DEBUG] CHECK_INPUT: anyKeyPressed=" << inputState.anyKeyPressed
-                          << " mouseButtonPressed=" << inputState.mouseButtonPressed
-                          << " pressedKeyCount=" << inputState.pressedKeyCount << std::endl;
+                // Only log if there was actual input to reduce spam
+                if (inputState.anyKeyPressed || inputState.mouseButtonPressed) {
+                    std::cerr << "[DEBUG] CHECK_INPUT: key=" << inputState.anyKeyPressed
+                              << " mouse=" << inputState.mouseButtonPressed << std::endl;
+                }
                 sendResponse(createInputStateResponse(inputState));
                 break;
             }

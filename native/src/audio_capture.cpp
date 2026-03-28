@@ -210,8 +210,11 @@ bool AudioCapture::start() {
     }
 
     if (running_) {
+        std::cerr << "[AudioCapture] Already running" << std::endl;
         return true;
     }
+
+    std::cerr << "[AudioCapture] DEBUG: Starting audio client..." << std::endl;
 
     HRESULT hr = audioClient_->Start();
     if (FAILED(hr)) {
@@ -219,10 +222,13 @@ bool AudioCapture::start() {
         return false;
     }
 
+    std::cerr << "[AudioCapture] DEBUG: Audio client started, creating capture thread..." << std::endl;
+
     running_ = true;
     captureThread_ = std::thread(&AudioCapture::captureThread, this);
 
     std::cout << "[AudioCapture] Started capturing" << std::endl;
+    std::cerr << "[AudioCapture] DEBUG: Capture thread created" << std::endl;
     return true;
 }
 
@@ -249,12 +255,23 @@ void AudioCapture::stop() {
 }
 
 void AudioCapture::captureThread() {
-    std::cout << "[AudioCapture] Capture thread started" << std::endl;
+    std::cout << "[AudioCapture] DEBUG: Capture thread started" << std::endl;
+    std::cerr << "[AudioCapture] DEBUG: Capture thread started" << std::endl;
+
+    if (!captureClient_) {
+        std::cerr << "[AudioCapture] ERROR: captureClient_ is NULL!" << std::endl;
+        return;
+    }
 
     const uint32_t sampleRate = mixFormat_->nSamplesPerSec;
     const uint16_t channels = mixFormat_->nChannels;
     const uint16_t bytesPerSample = mixFormat_->wBitsPerSample / 8;
     const uint32_t frameSize = channels * bytesPerSample;
+
+    std::cerr << "[AudioCapture] DEBUG: format: sampleRate=" << sampleRate
+              << ", channels=" << channels
+              << ", bytesPerSample=" << bytesPerSample
+              << ", frameSize=" << frameSize << std::endl;
 
     while (running_) {
         // Wait for either data or stop event
@@ -263,10 +280,12 @@ void AudioCapture::captureThread() {
 
         if (waitResult == WAIT_OBJECT_0) {
             // Stop event signaled
+            std::cerr << "[AudioCapture] DEBUG: Stop event received, exiting capture thread" << std::endl;
             break;
         }
 
         if (waitResult != WAIT_TIMEOUT) {
+            std::cerr << "[AudioCapture] DEBUG: Wait returned unexpected result: " << waitResult << std::endl;
             continue;
         }
 
@@ -275,6 +294,50 @@ void AudioCapture::captureThread() {
         HRESULT hr = captureClient_->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) {
             std::cerr << "[AudioCapture] GetNextPacketSize failed: 0x" << std::hex << hr << std::endl;
+            continue;
+        }
+
+        // DEBUG: Log packet status periodically
+        static int debugCounter = 0;
+        debugCounter++;
+        if (debugCounter % 50 == 0) { // Every 50 iterations (~5 seconds)
+            bool pipeReady = pipeReadyEvent_ && WaitForSingleObject(pipeReadyEvent_, 0) == WAIT_OBJECT_0;
+            bool pipeValid = namedPipe_ != INVALID_HANDLE_VALUE;
+            std::cerr << "[AudioCapture] DEBUG: loop check: packet=" << packetLength
+                      << ", pipeReady=" << pipeReady
+                      << ", pipeValid=" << pipeValid
+                      << ", running=" << running_ << std::endl;
+        }
+
+        // If no packet available, write silence to keep the pipe flowing
+        if (packetLength == 0) {
+            // Check pipe status
+            bool pipeReady = pipeReadyEvent_ && WaitForSingleObject(pipeReadyEvent_, 0) == WAIT_OBJECT_0;
+            bool pipeValid = namedPipe_ != INVALID_HANDLE_VALUE;
+
+            // ALWAYS write silence to pipe, even if FFmpeg not connected yet
+            // This buffers data for FFmpeg to read when it connects
+            size_t silenceSize = frameSize * 100; // 100 frames worth of silence
+            std::vector<uint8_t> silence(silenceSize, 0);
+            if (namedPipe_ != INVALID_HANDLE_VALUE) {
+                DWORD bytesWritten;
+                if (!WriteFile(namedPipe_, silence.data(), (DWORD)silence.size(), &bytesWritten, nullptr)) {
+                    DWORD err = GetLastError();
+                    // Ignore ERROR_NO_DATA - means pipe buffer is full or no reader
+                    if (err != ERROR_NO_DATA && err != ERROR_BROKEN_PIPE) {
+                        std::cerr << "[AudioCapture] DEBUG: Failed to write silence, error: " << err << std::endl;
+                    } else if (err == ERROR_NO_DATA) {
+                        // Pipe buffer full - this is normal when FFmpeg hasn't connected yet
+                    }
+                } else {
+                    // DEBUG: Log silence written
+                    static int silenceCounter = 0;
+                    silenceCounter++;
+                    if (silenceCounter % 100 == 0) { // Don't spam too much
+                        std::cerr << "[AudioCapture] DEBUG: Wrote " << bytesWritten << " bytes silence, pipeReady=" << pipeReady << std::endl;
+                    }
+                }
+            }
             continue;
         }
 
@@ -301,30 +364,60 @@ void AudioCapture::captureThread() {
             if (numFramesAvailable > 0) {
                 size_t dataBytes = numFramesAvailable * frameSize;
 
+                // DEBUG: Log every time we get audio data (not just periodically)
+                bool isSilent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+                bool pipeReady = pipeReadyEvent_ && WaitForSingleObject(pipeReadyEvent_, 0) == WAIT_OBJECT_0;
+                std::cerr << "[AudioCapture] DEBUG: Got data: frames=" << numFramesAvailable
+                          << ", bytes=" << dataBytes
+                          << ", silent=" << isSilent
+                          << ", pipeReady=" << pipeReady << std::endl;
+
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                    // Silent data - write zeros to pipe and callback
-                    std::vector<uint8_t> silence(dataBytes, 0);
-                    if (pipeConnected_ && namedPipe_ != INVALID_HANDLE_VALUE) {
+                    std::cerr << "[AudioCapture] DEBUG: Silent flag set - no actual audio data" << std::endl;
+                    // Still write silence to pipe
+                    if (pipeReady && namedPipe_ != INVALID_HANDLE_VALUE) {
+                        std::vector<uint8_t> silence(dataBytes, 0);
                         DWORD bytesWritten;
-                        if (!WriteFile(namedPipe_, silence.data(), (DWORD)silence.size(), &bytesWritten, nullptr)) {
-                            std::cerr << "[AudioCapture] ERROR: Failed to write silent data to pipe. Error: " << GetLastError() << std::endl;
-                        }
-                    }
-                    if (callback_) {
-                        callback_(silence.data(), silence.size(), qpcPosition);
+                        WriteFile(namedPipe_, silence.data(), (DWORD)silence.size(), &bytesWritten, nullptr);
                     }
                 } else if (pData) {
-                    // Write audio data to named pipe
-                    if (pipeConnected_ && namedPipe_ != INVALID_HANDLE_VALUE) {
-                        DWORD bytesWritten;
-                        if (!WriteFile(namedPipe_, pData, (DWORD)dataBytes, &bytesWritten, nullptr)) {
-                            std::cerr << "[AudioCapture] ERROR: Failed to write audio data to pipe. Error: " << GetLastError() << std::endl;
+                    // Only write to pipe if FFmpeg has connected
+                    if (pipeReadyEvent_ && WaitForSingleObject(pipeReadyEvent_, 0) == WAIT_OBJECT_0) {
+                        // FFmpeg is connected, write audio
+                        // Convert float32 to int16
+                        const float* floatData = reinterpret_cast<const float*>(pData);
+                        std::vector<uint8_t> int16Data(numFramesAvailable * frameSize / 2);
+                        int16_t* outPtr = reinterpret_cast<int16_t*>(int16Data.data());
+
+                        for (uint32_t i = 0; i < numFramesAvailable * channels; i++) {
+                            float sample = floatData[i];
+                            if (sample > 1.0f) sample = 1.0f;
+                            if (sample < -1.0f) sample = -1.0f;
+                            outPtr[i] = static_cast<int16_t>(sample * 32767.0f);
                         }
-                    }
-                    if (callback_) {
-                        callback_(pData, dataBytes, qpcPosition);
+
+                        if (namedPipe_ != INVALID_HANDLE_VALUE) {
+                            DWORD bytesWritten;
+                            // Non-blocking write with timeout
+                            if (WriteFile(namedPipe_, int16Data.data(), (DWORD)int16Data.size(), &bytesWritten, nullptr)) {
+                                std::cerr << "[AudioCapture] DEBUG: Wrote " << bytesWritten << " bytes to pipe" << std::endl;
+                            } else {
+                                DWORD err = GetLastError();
+                                if (err == ERROR_NO_DATA) {
+                                    // Pipe buffer full - skip this frame, FFmpeg will read what it can
+                                    std::cerr << "[AudioCapture] DEBUG: Pipe buffer full, skipping" << std::endl;
+                                } else if (err != ERROR_BROKEN_PIPE) {
+                                    std::cerr << "[AudioCapture] ERROR: Write failed: " << err << std::endl;
+                                }
+                            }
+                        }
+                    } else {
+                        // FFmpeg not connected yet - skip write
+                        // std::cerr << "[AudioCapture] DEBUG: Skipping - FFmpeg not connected" << std::endl;
                     }
                 }
+            } else {
+                // std::cerr << "[AudioCapture] DEBUG: numFramesAvailable=0" << std::endl;
             }
 
             // Release the buffer
@@ -387,16 +480,18 @@ bool AudioCapture::createNamedPipe(const std::string& pipeName) {
 }
 
 void AudioCapture::pipeConnectionThread() {
+    std::cerr << "[AudioCapture] DEBUG: pipeConnectionThread started, waiting for FFmpeg..." << std::endl;
     BOOL result = ConnectNamedPipe(namedPipe_, nullptr);
     if (result || GetLastError() == ERROR_PIPE_CONNECTED) {
         pipeConnected_ = true;
-        std::cerr << "[AudioCapture] FFmpeg connected to audio pipe" << std::endl;
+        std::cerr << "[AudioCapture] DEBUG: FFmpeg connected to audio pipe" << std::endl;
         // Signal the event so waiting code knows FFmpeg is connected
         if (pipeReadyEvent_) {
             SetEvent(pipeReadyEvent_);
         }
     } else {
         DWORD err = GetLastError();
+        std::cerr << "[AudioCapture] DEBUG: ConnectNamedPipe failed with error: " << err << std::endl;
         if (err != ERROR_NO_DATA && err != ERROR_BROKEN_PIPE) {
             std::cerr << "[AudioCapture] ConnectNamedPipe failed: " << err << std::endl;
         }
