@@ -1371,3 +1371,46 @@ void shutdownRecorder() {
         g_recorder = nullptr;
     }
 }
+
+// WASAPI system audio capture (replaces VB-Audio Virtual Cable)
+bool Recorder::startSystemAudioCapture() {
+    writeNativeLog("Recorder::startSystemAudioCapture() called");
+    if (systemAudioCapture_) {
+        writeNativeLog("System audio capture already running.");
+        return true;
+    }
+
+    systemAudioCapture_ = std::make_unique<AudioCapture>(true); // true for loopback
+    if (!systemAudioCapture_->initialize()) {
+        writeNativeLog("Failed to initialize system audio capture.");
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    // Generate a unique pipe name
+    systemAudioPipeName_ = "\\\\.\\pipe\\ScreenCraft_SystemAudio_" + std::to_string(GetCurrentProcessId());
+    if (!systemAudioCapture_->createNamedPipe(systemAudioPipeName_)) {
+        writeNativeLog("Failed to create named pipe for system audio.");
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    if (!systemAudioCapture_->start()) {
+        writeNativeLog("Failed to start system audio capture.");
+        systemAudioCapture_.reset();
+        return false;
+    }
+
+    writeNativeLog("System audio capture started successfully.");
+    return true;
+}
+
+void Recorder::stopSystemAudioCapture() {
+    writeNativeLog("Recorder::stopSystemAudioCapture() called");
+    if (systemAudioCapture_) {
+        systemAudioCapture_->stop();
+        systemAudioCapture_->closeNamedPipe();
+        systemAudioCapture_.reset();
+        writeNativeLog("System audio capture stopped and cleaned up.");
+    }
+}
