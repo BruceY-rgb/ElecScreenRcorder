@@ -239,11 +239,13 @@ InputState getCurrentInputState() {
 // Get modifier key states
 ModifierKeys getModifierKeys() {
     ModifierKeys keys;
-    keys.altKey = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-    keys.ctrlKey = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    keys.shiftKey = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    keys.metaKey = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
-                   (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    // Use g_keyStates array (maintained by hook thread) instead of GetAsyncKeyState
+    // This provides more accurate modifier key state during key events
+    keys.altKey = g_keyStates[VK_MENU].load(std::memory_order_relaxed);
+    keys.ctrlKey = g_keyStates[VK_CONTROL].load(std::memory_order_relaxed);
+    keys.shiftKey = g_keyStates[VK_SHIFT].load(std::memory_order_relaxed);
+    keys.metaKey = g_keyStates[VK_LWIN].load(std::memory_order_relaxed) ||
+                   g_keyStates[VK_RWIN].load(std::memory_order_relaxed);
     return keys;
 }
 
