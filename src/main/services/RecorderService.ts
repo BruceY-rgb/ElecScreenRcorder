@@ -157,6 +157,7 @@ export class RecorderService {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private isRestarting: boolean = false;
   private isDestroying: boolean = false;
+  private isStopping: boolean = false;
 
   // Status broadcast timer (for duration updates)
   private statusBroadcastTimer: NodeJS.Timeout | null = null;
@@ -388,31 +389,49 @@ export class RecorderService {
       throw new Error('Cannot stop: not recording');
     }
 
-    const response = await this.sendCommandWithResponse('finish', { action: 'stop' }, 10000);
+    // 标记正在停止，暂停 heartbeat 超时检测
+    this.isStopping = true;
 
-    this.state = 'idle';
-    this.stopHeartbeat();
+    // 在发送 stop 命令前先停止 status broadcast，防止停止过程中继续发送命令
     this.stopStatusBroadcast();
-    this.currentConfig = null;
-    this.mouseActivity = 0;
-    this.log('INFO', 'Recording stopped');
-    this.broadcastStatus();
 
-    let videoPath: string = response.videoPath || '';
+    try {
+      // 增加超时时间到 35 秒，让 FFmpeg 有足够时间停止（native core 内部 30 秒超时）
+      const response = await this.sendCommandWithResponse('finish', { action: 'stop' }, 35000);
 
-    // Remux MKV to MP4 if requested
-    if (this.shouldRemuxToMp4 && videoPath && /\.mkv$/i.test(videoPath)) {
-      videoPath = await this.remuxMkvToMp4(videoPath);
+      this.state = 'idle';
+      this.stopHeartbeat();
+      this.currentConfig = null;
+      this.mouseActivity = 0;
+      this.log('INFO', 'Recording stopped');
+      this.broadcastStatus();
+
+      let videoPath: string = response.videoPath || '';
+
+      // Remux MKV to MP4 if requested
+      if (this.shouldRemuxToMp4 && videoPath && /\.mkv$/i.test(videoPath)) {
+        videoPath = await this.remuxMkvToMp4(videoPath);
+      }
+
+      return {
+        videoPath,
+        actionsPath: response.actionsPath || '',
+        movementsPath: response.movementsPath || '',
+        micAudioPath: response.micAudioPath || '',
+        duration: response.duration || this.duration,
+        recordingFolder: this.recordingFolder,
+      };
+    } catch (err) {
+      // 停止失败时，也要停止 heartbeat，并强制设置状态为 idle
+      this.stopHeartbeat();
+      this.state = 'idle';
+      this.currentConfig = null;
+      this.mouseActivity = 0;
+      this.broadcastStatus();
+      throw err;
+    } finally {
+      this.isStopping = false;
     }
-
-    return {
-      videoPath,
-      actionsPath: response.actionsPath || '',
-      movementsPath: response.movementsPath || '',
-      micAudioPath: response.micAudioPath || '',
-      duration: response.duration || this.duration,
-      recordingFolder: this.recordingFolder,
-    };
   }
 
   async pause(): Promise<void> {
@@ -865,6 +884,11 @@ export class RecorderService {
   }
 
   private checkHeartbeat(): void {
+    // 当正在停止时，跳过 heartbeat 超时检测
+    if (this.isStopping) {
+      return;
+    }
+
     const now = Date.now();
     const elapsed = now - this.lastHeartbeat;
 

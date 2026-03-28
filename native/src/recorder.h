@@ -196,7 +196,7 @@ private:
     bool waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs);
 
     // Gracefully stop the current FFmpeg process
-    bool stopFFmpegGracefully(int timeoutMs = 10000);
+    bool stopFFmpegGracefully(int timeoutMs = 30000);
 
     // Generate next segment file path (e.g. recording_seg001.mkv)
     std::string generateSegmentPath();
@@ -210,7 +210,7 @@ private:
     // Microphone FFmpeg process management
     std::string buildMicFFmpegCommand(const RecordingConfig& config);
     bool startMicFFmpeg(const std::string& command);
-    bool stopMicFFmpegGracefully(int timeoutMs = 10000);
+    bool stopMicFFmpegGracefully(int timeoutMs = 30000);
     std::string generateMicSegmentPath();
     bool concatenateMicSegments();
     void cleanupMicSegmentFiles();
