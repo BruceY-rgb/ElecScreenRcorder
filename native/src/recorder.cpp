@@ -149,6 +149,7 @@ bool Recorder::initialize(const std::wstring& modulePath) {
         default: std::cout << "none";
     }
     std::cout << std::endl;
+    std::cerr << "[RECORDER] DEBUG: encoderType_ = " << static_cast<int>(encoderType_) << std::endl;
 
     // Check ddagrab availability
     ddagrabAvailable_ = isDdagrabAvailable();
@@ -227,11 +228,17 @@ static bool testEncoderWorks(const std::string& ffmpegPath, const std::string& e
     std::string args = "-hide_banner -f lavfi -i color=black:s=64x64:d=0.1 -frames:v 1"
                        " -c:v " + encoderName + " -f null NUL";
     std::string output = runFFmpegProbe(ffmpegPath, args, 5000);
+
     // Check for success indicators (encoded at least 1 frame) and no fatal errors
     bool hasError = output.find("Error while opening encoder") != std::string::npos ||
                     output.find("Driver does not support") != std::string::npos ||
                     output.find("Cannot load") != std::string::npos ||
-                    output.find("No capable devices found") != std::string::npos;
+                    output.find("No capable devices found") != std::string::npos ||
+                    output.find("Implementation not found") != std::string::npos ||
+                    output.find("Device not found") != std::string::npos ||
+                    output.find("Cannot initialize") != std::string::npos ||
+                    output.find("QSV") != std::string::npos ||
+                    output.find("encoder (qsv)") != std::string::npos;
     bool hasSuccess = output.find("frame=") != std::string::npos ||
                       output.find("video:") != std::string::npos;
     return hasSuccess && !hasError;
@@ -245,6 +252,11 @@ EncoderType Recorder::checkHardwareEncoders() {
         return EncoderType::X264;
     }
 
+    // Force x264 for debugging - skip all hardware encoders
+    std::cerr << "[RECORDER] DEBUG: Forcing x264 encoder" << std::endl;
+    return EncoderType::X264;
+
+    /*
     // Then actually test each available encoder with the current GPU driver
     // Priority: NVENC > AMF > QSV > X264
     if (output.find("h264_nvenc") != std::string::npos) {
@@ -272,8 +284,10 @@ EncoderType Recorder::checkHardwareEncoders() {
         std::cerr << "[RECORDER] h264_qsv not supported by current GPU driver" << std::endl;
     }
 
+    // Fall through to x264 if all hardware encoders fail
     std::cerr << "[RECORDER] No hardware encoders found or working, defaulting to x264" << std::endl;
     return EncoderType::X264;
+    */
 }
 
 bool Recorder::isDdagrabAvailable() {
@@ -303,6 +317,7 @@ bool Recorder::startRecording(const RecordingConfig& config) {
     config_ = config;
     outputPath_ = config.savePath;
     finalOutputPath_ = config.savePath;
+    currentSegmentPath_ = generateSegmentPath();
     segmentCounter_ = 0;
     segmentPaths_.clear();
     totalPausedDuration_ = 0;
@@ -387,13 +402,18 @@ std::string Recorder::buildFFmpegCommand(const RecordingConfig& config) {
 
     // ===== AUDIO INPUT =====
     int audioInputCount = 0;
+    // DEBUG: Skip audio for now to isolate the issue
+    /*
     if (config_.captureAudio && !systemAudioPipeName_.empty()) {
+        // Use full pipe path for FFmpeg (\\.\pipe\ prefix)
+        std::string fullPipePath = "\\\\.\\pipe\\" + systemAudioPipeName_;
         cmd << " -f s16le -ar " << systemAudioCapture_->getSampleRate() << " -ac " << systemAudioCapture_->getChannels();
-        cmd << " -i \"" << systemAudioPipeName_ << "\"";
+        cmd << " -i \"" << fullPipePath << "\"";
         audioInputCount++;
-        std::cerr << "[RECORDER] System audio via WASAPI pipe: " << systemAudioPipeName_
+        std::cerr << "[RECORDER] System audio via WASAPI pipe: " << fullPipePath
                   << " fmt=" << systemAudioCapture_->getFormat() << " ar=" << systemAudioCapture_->getSampleRate() << " ac=" << systemAudioCapture_->getChannels() << std::endl;
     }
+    */
 
     // Microphone is recorded to a separate file via a dedicated FFmpeg process.
 
@@ -523,7 +543,12 @@ bool Recorder::waitForFFmpegReady(HANDLE hStderrRead, int timeoutMs) {
                     buffer.find("Failed to create D3D11 device") != std::string::npos ||
                     buffer.find("Failed to initialize DXGI Desktop Duplication API") != std::string::npos ||
                     buffer.find("No capable devices found") != std::string::npos ||
-                    buffer.find("Error during codec control") != std::string::npos) {
+                    buffer.find("Error during codec control") != std::string::npos ||
+                    buffer.find("Implementation not found") != std::string::npos ||
+                    buffer.find("Device not found") != std::string::npos ||
+                    buffer.find("Cannot initialize") != std::string::npos ||
+                    buffer.find("QSV") != std::string::npos ||
+                    buffer.find("encoder (qsv)") != std::string::npos) {
                     writeNativeLog("F_ERROR: FFmpeg reported an error.");
                     return false;
                 }
@@ -1387,8 +1412,8 @@ bool Recorder::startSystemAudioCapture() {
         return false;
     }
 
-    // Generate a unique pipe name
-    systemAudioPipeName_ = "\\\\.\\pipe\\ScreenCraft_SystemAudio_" + std::to_string(GetCurrentProcessId());
+    // Generate pipe name (without \\.\pipe\ prefix - createNamedPipe will add it)
+    systemAudioPipeName_ = "ScreenCraft_SystemAudio_" + std::to_string(GetCurrentProcessId());
     if (!systemAudioCapture_->createNamedPipe(systemAudioPipeName_)) {
         writeNativeLog("Failed to create named pipe for system audio.");
         systemAudioCapture_.reset();
