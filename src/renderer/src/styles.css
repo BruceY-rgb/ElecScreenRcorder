@@ -529,6 +529,25 @@ body {
   font-size: 14px;
   text-align: center;
   -webkit-app-region: drag;
+  transition: all 0.3s ease;
+}
+
+.overlay.overlay-collapsed {
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.overlay-collapsed .overlay-info,
+.overlay-collapsed .overlay-buttons {
+  display: none;
+}
+
+.overlay-collapsed-orb {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 24px;
+  height: 24px;
 }
 
 .overlay .status {

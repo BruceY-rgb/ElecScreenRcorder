@@ -88,7 +88,8 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 int64_t relTime = calculateRelativeTime(evt.rawTime);
 
                 std::lock_guard<std::mutex> lock(g_bufferMutex);
-                g_actionsBuffer += "keyboard,";
+                // Change type to KEY_DOWN or KEY_UP based on evt.isDown
+                g_actionsBuffer += (evt.isDown ? "KEY_DOWN," : "KEY_UP,");
                 g_actionsBuffer += std::to_string(relTime) + ",";
                 g_actionsBuffer += std::to_string(evt.rawTime) + ",";
                 g_actionsBuffer += ",";  // x (not used for keyboard)
@@ -96,10 +97,11 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 g_actionsBuffer += ",";  // button (not used for keyboard)
                 g_actionsBuffer += std::to_string(evt.keycode) + ",";
                 g_actionsBuffer += escapeCsvField(std::string(1, evt.keyChar)) + ",";
-                g_actionsBuffer += std::string(evt.altKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.ctrlKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.shiftKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.metaKey ? "1" : "0") + "\n";
+                // Change boolean representation to "true" or "false"
+                g_actionsBuffer += std::string(evt.altKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.ctrlKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.shiftKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.metaKey ? "true" : "false") + "\n";
             }
         }
 
@@ -110,9 +112,12 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 int64_t relTime = calculateRelativeTime(evt.rawTime);
 
                 std::lock_guard<std::mutex> lock(g_bufferMutex);
-                std::string type = (evt.button == 1) ? "mouse_left" :
-                                   (evt.button == 2) ? "mouse_right" : "mouse_middle";
-                type += evt.isDown ? "_down" : "_up";
+                std::string type;
+                if (evt.isDown) {
+                    type = "MOUSE_DOWN";
+                } else {
+                    type = "MOUSE_UP";
+                }
 
                 g_actionsBuffer += type + ",";
                 g_actionsBuffer += std::to_string(relTime) + ",";
@@ -122,10 +127,11 @@ static DWORD WINAPI WriterThreadProc(LPVOID lpParameter) {
                 g_actionsBuffer += std::to_string(evt.button) + ",";
                 g_actionsBuffer += ",";  // keycode (not used for mouse)
                 g_actionsBuffer += ",";  // keyChar (not used for mouse)
-                g_actionsBuffer += std::string(evt.altKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.ctrlKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.shiftKey ? "1" : "0") + ",";
-                g_actionsBuffer += std::string(evt.metaKey ? "1" : "0") + "\n";
+                // Change boolean representation to "true" or "false"
+                g_actionsBuffer += std::string(evt.altKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.ctrlKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.shiftKey ? "true" : "false") + ",";
+                g_actionsBuffer += std::string(evt.metaKey ? "true" : "false") + "\n";
             }
         }
 

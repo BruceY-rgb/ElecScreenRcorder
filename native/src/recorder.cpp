@@ -994,8 +994,40 @@ bool Recorder::stopFFmpegGracefully(int timeoutMs) {
         // Send 'q' to FFmpeg stdin to request graceful shutdown
         const char quitCmd = 'q';
         DWORD bytesWritten = 0;
-        WriteFile(ffmpegStdin_, &quitCmd, 1, &bytesWritten, NULL);
-        FlushFileBuffers(ffmpegStdin_);
+        if (!WriteFile(ffmpegStdin_, &quitCmd, 1, &bytesWritten, NULL)) {
+            std::cerr << "[RECORDER] ERROR: Failed to write to FFmpeg stdin. Error: " << GetLastError() << std::endl;
+            writeNativeLog("FFG2_ERROR: Failed to write 'q' to FFmpeg stdin, forcing termination.");
+            // Proceed to forceful termination if write fails
+            TerminateProcess(ffmpegProcess_.hProcess, 0);
+            WaitForSingleObject(ffmpegProcess_.hProcess, 3000);
+            CloseHandle(ffmpegStdin_);
+            ffmpegStdin_ = nullptr;
+            // Clean up process handles
+            if (ffmpegProcess_.hProcess) {
+                CloseHandle(ffmpegProcess_.hProcess);
+                CloseHandle(ffmpegProcess_.hThread);
+                memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+            }
+            writeNativeLog("FFG4: FFmpeg process cleaned up (write failed)");
+            return false; // Indicate failure to gracefully stop
+        }
+        if (!FlushFileBuffers(ffmpegStdin_)) {
+            std::cerr << "[RECORDER] ERROR: Failed to flush FFmpeg stdin. Error: " << GetLastError() << std::endl;
+            writeNativeLog("FFG2_ERROR: Failed to flush FFmpeg stdin, forcing termination.");
+            // Proceed to forceful termination if flush fails
+            TerminateProcess(ffmpegProcess_.hProcess, 0);
+            WaitForSingleObject(ffmpegProcess_.hProcess, 3000);
+            CloseHandle(ffmpegStdin_);
+            ffmpegStdin_ = nullptr;
+            // Clean up process handles
+            if (ffmpegProcess_.hProcess) {
+                CloseHandle(ffmpegProcess_.hProcess);
+                CloseHandle(ffmpegProcess_.hThread);
+                memset(&ffmpegProcess_, 0, sizeof(ffmpegProcess_));
+            }
+            writeNativeLog("FFG4: FFmpeg process cleaned up (flush failed)");
+            return false; // Indicate failure to gracefully stop
+        }
         CloseHandle(ffmpegStdin_);
         ffmpegStdin_ = nullptr;
         std::cerr << "[RECORDER] stopFFmpegGracefully() - waiting for FFmpeg to exit..." << std::endl;

@@ -18,9 +18,14 @@ function OverlayDisplay() {
     duration: 0,
     frameCount: 0,
   });
+  const [overlayMode, setOverlayMode] = useState<'expanded' | 'collapsed'>('expanded');
 
   useEffect(() => {
     window.electronAPI.onRecordingStatus(setStatus);
+    // Listen for overlay mode changes from main process
+    window.electronAPI.onOverlayMode(({ mode }) => {
+      setOverlayMode(mode);
+    });
   }, []);
 
   const handlePause = useCallback(() => {
@@ -39,40 +44,54 @@ function OverlayDisplay() {
   const isPaused = status.state === 'paused';
 
   return (
-    <div className="overlay">
+    <div className={`overlay ${overlayMode === 'collapsed' ? 'overlay-collapsed' : ''}`}>
       <div className="overlay-indicator" style={{
         background: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
       }} />
-      <div className="overlay-info">
-        <div className="overlay-status" style={{
-          color: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
-        }}>
-          {isRecording ? 'REC' : isPaused ? 'PAUSED' : 'READY'}
-        </div>
-        <div className="overlay-duration">
-          {formatDuration(status.duration)}
-        </div>
-        {(isRecording || isPaused) && (
-          <div className="overlay-mouse">
-            {status.mouseActivity || 0} ev/s
+      {overlayMode === 'expanded' && (
+        <>
+          <div className="overlay-info">
+            <div className="overlay-status" style={{
+              color: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
+            }}>
+              {isRecording ? 'REC' : isPaused ? 'PAUSED' : 'READY'}
+            </div>
+            <div className="overlay-duration">
+              {formatDuration(status.duration)}
+            </div>
+            {(isRecording || isPaused) && (
+              <div className="overlay-mouse">
+                {status.mouseActivity || 0} ev/s
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="overlay-buttons">
-        {isRecording && (
-          <button className="overlay-btn pause-btn" onClick={handlePause} title="Pause">
-            &#9646;&#9646;
-          </button>
-        )}
-        {isPaused && (
-          <button className="overlay-btn resume-btn" onClick={handleResume} title="Resume">
-            &#9654;
-          </button>
-        )}
-        <button className="overlay-btn stop-btn" onClick={handleStop} title="Stop">
-          &#9632;
-        </button>
-      </div>
+          <div className="overlay-buttons">
+            {isRecording && (
+              <button className="overlay-btn pause-btn" onClick={handlePause} title="Pause">
+                &#9646;&#9646;
+              </button>
+            )}
+            {isPaused && (
+              <button className="overlay-btn resume-btn" onClick={handleResume} title="Resume">
+                &#9654;
+              </button>
+            )}
+            <button className="overlay-btn stop-btn" onClick={handleStop} title="Stop">
+              &#9632;
+            </button>
+          </div>
+        </>
+      )}
+      {overlayMode === 'collapsed' && (
+        <div className="overlay-collapsed-orb">
+          <div className="overlay-indicator" style={{
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            background: isRecording ? '#ff4444' : isPaused ? '#ffaa00' : '#44ff44',
+          }} />
+        </div>
+      )}
     </div>
   );
 }
